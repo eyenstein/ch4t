@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ch4t api — burak.wtf</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --bg:#0b0f1a;
+    --panel:#0f172a;
+    --border:#1f2a3d;
+    --accent:#3b82f6;
+    --ink:#e7ebf3;
+    --muted:#9aa0a6;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:var(--bg);
+    font-family:monospace;
+    color:var(--ink);
+  }
+  .page{
+    width: min(960px, 100%);
+    padding:40px 24px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:28px;
+  }
+  .window{
+    width:100%;
+    background:var(--panel);
+    border:2px solid var(--border);
+    border-radius:8px;
+    box-shadow:0 0 24px rgba(0,0,0,.45);
+    overflow:hidden;
+  }
+  .titlebar{
+    padding:10px 14px;
+    background:#182235;
+    font-weight:bold;
+    font-size:14px;
+    text-transform:uppercase;
+    letter-spacing:1px;
+  }
+  .content{
+    padding:20px;
+    display:flex;
+    flex-direction:column;
+    gap:18px;
+  }
+  .terminal{
+    background:rgba(5,9,18,.65);
+    border:1px solid #1b263f;
+    border-radius:6px;
+    padding:16px;
+    line-height:1.5;
+    font-size:13px;
+    white-space:pre-wrap;
+  }
+  h2{
+    margin:0;
+    font-size:16px;
+    color:var(--accent);
+  }
+  h3{
+    margin:12px 0 6px;
+    font-size:14px;
+    color:var(--ink);
+  }
+  p{ margin:0; color:var(--muted); }
+  code{
+    color:#f9fafb;
+  }
+  .prompt{ color:var(--accent); }
+  .note{
+    color:var(--muted);
+    font-size:12px;
+  }
+  a{ color:var(--accent); }
+</style>
+
+<body>
+  <div class="page">
+    <div class="window">
+      <div class="titlebar">burak.wtf · ch4t api</div>
+      <div class="content">
+        <h2>base url</h2>
+        <div class="terminal">
+          <span class="prompt">user@burak:~$</span> curl https://ch4t-eight.vercel.app/api/ping
+          └── <span class="note">returns { "ok": true }</span>
+        </div>
+        <p>
+          All endpoints below live under <code>https://ch4t-eight.vercel.app/api</code>. Public visitors can still post as
+          <code>anon</code>, but reserved nicknames require the bearer token issued during reservation.
+        </p>
+      </div>
+    </div>
+
+    <div class="window">
+      <div class="titlebar">reserve · login</div>
+      <div class="content">
+        <div class="terminal">
+user@burak:~$ curl -XPOST \
+  https://ch4t-eight.vercel.app/api/account \
+  -H "content-type: application/json" \
+  -d '{"nick":"neo","pass":"thereisnospoon"}'
+{
+  "ok": true,
+  "nick": "neo",
+  "token": "&lt;jwt&gt;"
+}
+        </div>
+        <p>
+          <strong>/account</strong> creates or authenticates a nickname. The same endpoint handles login; submitting an
+          existing nickname with the correct password returns a new token. Store it in <code>localStorage</code> so the main
+          page can welcome returning visitors automatically.
+        </p>
+        <p class="note">Tokens are JWTs. Attach them with <code>Authorization: Bearer &lt;token&gt;</code> to access protected routes.</p>
+      </div>
+    </div>
+
+    <div class="window">
+      <div class="titlebar">presence · channels</div>
+      <div class="content">
+        <div class="terminal">
+user@burak:~$ curl https://ch4t-eight.vercel.app/api/presence
+{
+  "ok": true,
+  "users": ["neo", "trinity"],
+  "anon_count": 3
+}
+        </div>
+        <p>
+          <strong>/presence</strong> lists the nicknames currently known by the server plus an anonymous counter. It helps the
+          UI update the online sidebar.
+        </p>
+        <div class="terminal">
+user@burak:~$ curl "https://ch4t-eight.vercel.app/api/channels?nick=neo"
+[
+  "#wtf",
+  "dm:neo|trinity"
+]
+        </div>
+        <p>
+          <strong>/channels</strong> returns the channels visible to a nickname, including DM slugs. The front-end transforms
+          <code>dm:a|b</code> into a friendly <code>@b</code> tab when the current user is <code>a</code>.
+        </p>
+      </div>
+    </div>
+
+    <div class="window">
+      <div class="titlebar">messages</div>
+      <div class="content">
+        <div class="terminal">
+user@burak:~$ curl "https://ch4t-eight.vercel.app/api/messages?channel=%23wtf"
+{
+  "ok": true,
+  "messages": [
+    {"id":1,"channel":"#wtf","author":"anon","text":"hey","ts":1713035600000}
+  ]
+}
+        </div>
+        <p>
+          <strong>/messages</strong> with <code>?channel=</code> returns recent posts. Public channels are open to everyone; DM
+          channels demand a valid token that matches one of the participants.
+        </p>
+        <div class="terminal">
+user@burak:~$ curl -XPOST \
+  https://ch4t-eight.vercel.app/api/messages \
+  -H "content-type: application/json" \
+  -H "authorization: Bearer &lt;jwt&gt;" \
+  -d '{"channel":"dm:neo|trinity","author":"neo","text":"psst"}'
+{
+  "ok": true,
+  "id": 42,
+  "ts": 1713035605123
+}
+        </div>
+        <p>
+          The API checks that the token’s nickname matches <code>author</code> and that the caller is part of the DM slug before
+          accepting the message. Anonymous visitors can still post to <code>#wtf</code> without a token by keeping
+          <code>author</code> as <code>anon</code>.
+        </p>
+      </div>
+    </div>
+
+    <div class="window">
+      <div class="titlebar">hand-off</div>
+      <div class="content">
+        <div class="terminal">
+user@burak:~$ open https://burak.wtf/#nick=neo&token=&lt;jwt&gt;
+        </div>
+        <p>
+          After reserving a nickname on the main page, visitors are redirected to ch4t with <code>#nick</code> and
+          <code>#token</code> in the URL. The front-end stores them in <code>localStorage</code>, keeps the session, and displays a
+          DM tab whenever you click another user inside the terminal view.
+        </p>
+        <p class="note">No logout button yet — tokens live until you clear storage or rotate them from /account.</p>
+      </div>
+    </div>
+
+    <a class="note" href="https://burak.wtf">⟵ back to burak.wtf</a>
+  </div>
+</body>
+</html>

@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ch4t</title>
+<style>
+  :root{
+    --bg:#0b0c10; --ink:#e7ebf3; --panel:#000; --line:#333; --accent:#00ff9d;
+    --danger:#7f1d1d; --muted:#9aa0a6;
+  }
+  *{box-sizing:border-box}
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:monospace; display:flex; height:100vh; }
+  /* layout */
+  #channels { width:220px; border-right:1px solid var(--line); background:#0e1117; padding:8px; display:flex; flex-direction:column; gap:8px; }
+  #channels h3 { margin:0 0 6px; font-size:13px; color:var(--muted); }
+  #chan-list { display:flex; flex-direction:column; gap:4px; }
+  .chan { padding:6px 8px; border:1px solid var(--line); border-radius:6px; cursor:pointer; }
+  .chan.active { border-color: var(--accent); }
+  #main { flex:1; display:flex; flex-direction:column; height:100%; }
+  #terminal { flex:1; background:var(--panel); padding:12px; overflow-y:auto; white-space:pre-wrap; word-break:break-word; border-bottom:1px solid var(--line); }
+  .msg { margin-bottom:6px; }
+  .author { color: var(--accent); font-weight: bold; cursor:pointer; }
+  .author.anon { color:#9aa0a6; font-weight:bold; cursor:default; }
+  .time { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  #form-wrap{ border-top:1px solid var(--line); background:var(--bg); }
+  #form { display:flex; padding:8px; gap:6px; }
+  input,button{ font-family:monospace; font-size:14px; padding:8px; border-radius:4px; border:1px solid #444; background:#111; color:var(--ink); }
+  input:focus{ outline:none; border-color:var(--accent); }
+  button{ cursor:pointer; background:var(--accent); color:#000; font-weight:bold; }
+  #text{ flex:1; }
+  .online-bar{ display:flex; align-items:center; gap:8px; padding:6px 8px; border-top:1px solid var(--line); background:#0d0f14; font-size:13px; color:var(--muted); }
+  .pill{ border:1px solid var(--line); border-radius:999px; padding:2px 8px; font-size:12px; color:var(--ink); }
+  #online-toggle{ background:transparent; color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:4px 8px; font-weight:600; cursor:pointer; }
+  #online-panel{ display:none; border-top:1px dashed var(--line); background:#0e1117; padding:8px; font-size:13px; }
+  #online-panel.open{ display:block; }
+  .row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .sep{ height:1px; background:#1b1f28; margin:8px 0; }
+  #admin-tools { display:grid; grid-template-columns:1fr auto; gap:6px; padding:6px; background:var(--bg); border-top: 1px solid var(--line); }
+  #tokens { display:flex; gap:6px; }
+  .del-btn{ margin-left:8px; background:var(--danger); color:#fff; border:none; padding:2px 6px; border-radius:4px; cursor:pointer; }
+</style>
+</head>
+<body>
+  <aside id="channels">
+    <h3>ch4ts</h3>
+    <div id="chan-list"></div>
+  </aside>
+
+  <div id="main">
+    <div id="terminal"></div>
+
+    <div id="form-wrap">
+      <div class="online-bar">
+        <button id="online-toggle" type="button">online</button>
+        <span id="nick-count" class="pill">nick: 0</span>
+        <span id="anon-count" class="pill">anon: 0</span>
+        <span id="conn" class="pill" style="margin-left:auto">linking…</span>
+      </div>
+      <div id="online-panel">
+        <div class="row">
+          <div>nickers: <strong id="nick-count-big">0</strong></div>
+          <div>anonymous users: <strong id="anon-count-big">0</strong></div>
+        </div>
+        <div class="sep"></div>
+        <div id="online-hint" style="color:var(--muted)"></div>
+      </div>
+
+      <form id="form">
+        <input id="text" type="text" placeholder="type a message…" maxlength="500" autocomplete="off">
+        <button type="submit">send</button>
+      </form>
+
+      <div id="admin-tools">
+        <div id="tokens">
+          <input id="admin-token" type="password" placeholder="ch4t_t0ken" style="flex:1">
+          <input id="edit-token"  type="password" placeholder="ed1t_t0ken" style="flex:1">
+        </div>
+        <button id="admin-apply" type="button">get_pwr</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+  const API_BASE = "https://burak.wtf/api";
+  const DEFAULT_CH = "#wtf";
+
+  function getCurrentUser(){
+    try{
+      const raw = localStorage.getItem("burak_user");
+      if (raw){
+        const u = JSON.parse(raw);
+        return { nick:(u.nick||"").slice(0,24), token: u.token||"" };
+      }
+    }catch{}
+    return { nick:"", token:"" };
+  }
+  let CURRENT = getCurrentUser();
+
+  // Ana sayfadan #nick&token geldiyse localStorage'a yaz
+  (function handoffFromHash(){
+    const h = new URLSearchParams(location.hash.slice(1));
+    const nick = h.get("nick");
+    const token = h.get("token");
+    if (nick && token) {
+      localStorage.setItem("burak_user", JSON.stringify({ nick, token }));
+      history.replaceState(null, "", location.pathname + location.search);
+      CURRENT = getCurrentUser();
+    }
+  })();
+
+  /* ====== DOM ====== */
+  const $term = document.getElementById("terminal");
+  const $form = document.getElementById("form");
+  const $text = document.getElementById("text");
+  const $adminToken = document.getElementById("admin-token");
+  const $adminApply = document.getElementById("admin-apply");
+  const $onlineToggle = document.getElementById("online-toggle");
+  const $onlinePanel  = document.getElementById("online-panel");
+  const $nickCount    = document.getElementById("nick-count");
+  const $anonCount    = document.getElementById("anon-count");
+  const $nickCountBig = document.getElementById("nick-count-big");
+  const $anonCountBig = document.getElementById("anon-count-big");
+  const $conn         = document.getElementById("conn");
+  const $chanList     = document.getElementById("chan-list");
+
+  /* ====== STATE ====== */
+  let ch4t_t0ken = "";
+  let activeChannel = DEFAULT_CH;
+  const cache = {}; // { [channel]: { messages:[], lastTs:0 } }
+  function ensureChan(ch){
+    if (!cache[ch]) cache[ch] = { messages:[], lastTs:0 };
+    return cache[ch];
+  }
+  function sortPair(a,b){
+    a = String(a||"").trim().toLowerCase();
+    b = String(b||"").trim().toLowerCase();
+    return a < b ? [a,b] : [b,a];
+  }
+  function dmFor(a,b){ const [x,y] = sortPair(a,b); return `dm:${x}|${y}`; }
+  function labelForChannel(ch){
+      if (!ch.startsWith("dm:")) return ch;
+      const slug = ch.slice(3);
+      const parts = slug.split("|");
+      if (parts.length !== 2) return ch;
+      const me = String(CURRENT.nick||"").trim().toLowerCase();
+      const other = parts.find(p => p && p !== me) || parts[0];
+      return other ? `@${other}` : ch;
+    }
+  /* ====== CHANNEL UI ====== */
+  let channelList = [DEFAULT_CH];
+  function renderChannels(list){
+    $chanList.innerHTML = "";
+    list.forEach(ch=>{
+      const div = document.createElement("div");
+      div.className = "chan" + (ch===activeChannel ? " active":"");
+      div.textContent = labelForChannel(ch);
+      div.onclick = ()=>{
+        if (activeChannel !== ch){
+          activeChannel = ch;
+          $text.placeholder = CURRENT.nick ? `message as ${CURRENT.nick} in ${activeChannel}…` : `type a message in ${activeChannel}…`;
+          renderChannels(channelList);
+          if (!cache[ch] || cache[ch].messages.length === 0){
+            loadMessages(true);
+          } else {
+            renderMessages();
+          }
+        }
+      };
+      $chanList.appendChild(div);
+    });
+  }
+
+  /* ====== HELPERS ====== */
+  function setConn(s){ $conn.textContent = s; }
+  function scrollToBottom(force=false){
+    const nearBottom = $term.scrollHeight - ($term.scrollTop + $term.clientHeight) < 80;
+    if (force || nearBottom) $term.scrollTop = $term.scrollHeight;
+  }
+  function escapeHtml(s){
+    return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+                    .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  }
+
+  /* ====== RENDER ====== */
+  function renderMessages(){
+    const state = ensureChan(activeChannel);
+    $term.innerHTML = "";
+    state.messages.forEach(m => {
+      const div = document.createElement("div");
+      div.className = "msg";
+      const tsStr = new Date(Number(m.ts)).toLocaleTimeString();
+
+      const a = (m.author ?? "").toString().trim();
+      if (a && a.toLowerCase() !== "anon") {
+        div.innerHTML = `<span class="author" data-author="${escapeHtml(a)}">${escapeHtml(a)}</span>: ${escapeHtml(m.text)} <span class="time">${tsStr}</span>`;
+      } else {
+        div.innerHTML = `<span class="author anon">anon</span>: ${escapeHtml(m.text)} <span class="time">${tsStr}</span>`;
+      }
+
+      // Admin delete
+      if (ch4t_t0ken) {
+        const btn = document.createElement("button");
+        btn.className = "del-btn"; btn.textContent = "delete";
+        btn.onclick = async () => {
+          const res = await fetch(`${API_BASE}/api/messages?id=${encodeURIComponent(m.id)}&channel=${encodeURIComponent(activeChannel)}`, {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${ch4t_t0ken}` }
+          });
+          if (res.ok) {
+            state.messages = state.messages.filter(x => x.id !== m.id);
+            renderMessages();
+          } else {
+            alert("couldn't delete");
+          }
+        };
+        div.appendChild(btn);
+      }
+
+      $term.appendChild(div);
+    });
+
+    // Yazar adına tıkla → DM kanalı aç
+    $term.querySelectorAll(".author:not(.anon)").forEach(el=>{
+      el.addEventListener("click", ()=>{
+        const nick = el.getAttribute("data-author");
+        if (!nick || !CURRENT.nick || nick.toLowerCase() === "anon") return;
+        const ch = dmFor(CURRENT.nick, nick);
+        if (!channelList.includes(ch)) channelList.push(ch);
+        renderChannels(channelList);
+        if (activeChannel !== ch){
+          activeChannel = ch;
+          $text.placeholder = CURRENT.nick ? `message as ${CURRENT.nick} in ${activeChannel}…` : `type a message in ${activeChannel}…`;
+          loadMessages(true);
+        }
+      });
+    });
+
+    scrollToBottom();
+  }
+
+  function ingest(data){
+    if (!Array.isArray(data) || !data.length) return;
+    const st = ensureChan(activeChannel);
+    const seen = new Set(st.messages.map(m => m.id));
+    data.forEach(m => { const ts = Number(m.ts); if (!seen.has(m.id)) st.messages.push({ ...m, ts }); });
+    st.messages.sort((a,b)=>a.ts - b.ts);
+    st.lastTs = Math.max(st.lastTs, ...data.map(m => Number(m.ts) || 0));
+  }
+
+  /* ====== NETWORK ====== */
+  async function loadMessages(initial=false) {
+    try{
+      const st = ensureChan(activeChannel);
+      const url = initial || !st.lastTs
+        ? `${API_BASE}/api/messages?channel=${encodeURIComponent(activeChannel)}`
+        : `${API_BASE}/api/messages?channel=${encodeURIComponent(activeChannel)}&since=${st.lastTs}`;
+        const headers = {};
+        if (CURRENT.token) headers["Authorization"] = `Bearer ${CURRENT.token}`;
+        const res = await fetch(url, { headers });
+      if (!res.ok) throw 0;
+      const data = await res.json();
+      ingest(data);
+      renderMessages();
+      setConn("online");
+    }catch{ setConn("offline"); }
+  }
+
+  async function heartbeat(){
+    try{
+      const headers = { "Content-Type":"application/json" };
+      if (CURRENT.token) headers["Authorization"] = `Bearer ${CURRENT.token}`;
+      await fetch(`${API_BASE}/api/presence`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ nick: CURRENT.nick || "" })
+      });
+    }catch{}
+  }
+
+  async function fetchPresence(){
+    try{
+      const res = await fetch(`${API_BASE}/api/presence`);
+      if (!res.ok) throw 0;
+      const data = await res.json();
+      const nick_count = Array.isArray(data.users) ? data.users.length : 0;
+      const anon_count = Number(data.anon_count || 0);
+      if ($nickCount) $nickCount.textContent = `nick: ${nick_count}`;
+      if ($anonCount) $anonCount.textContent = `anon: ${anon_count}`;
+      if ($nickCountBig) $nickCountBig.textContent = String(nick_count);
+      if ($anonCountBig) $anonCountBig.textContent = String(anon_count);
+    }catch{}
+  }
+
+  // Karşı tarafta DM kanalı belirsin diye periyodik tarama
+  async function fetchChannels(){
+    try{
+      if (!CURRENT.nick) return;
+      const res = await fetch(`${API_BASE}/api/channels?nick=${encodeURIComponent(CURRENT.nick)}`);
+      if (!res.ok) return;
+      const chs = await res.json();
+      let changed = false;
+      chs.forEach(c => {
+        if (!channelList.includes(c)) { channelList.push(c); changed = true; }
+        ensureChan(c);
+      });
+      if (changed) renderChannels(channelList);
+    }catch{}
+  }
+
+  /* ====== EVENTS ====== */
+  $adminApply.addEventListener("click", () => {
+    ch4t_t0ken = $adminToken.value.trim();
+    renderMessages();
+    alert("power granted");
+  });
+
+  $form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = $text.value.trim();
+    if (!text) return;
+
+    CURRENT = getCurrentUser();
+    const payload = { author: CURRENT.nick || "anon", text, channel: activeChannel };
+    const st = ensureChan(activeChannel);
+
+    const tempId = "temp_" + Math.random().toString(36).slice(2);
+    const temp = { id: tempId, ...payload, ts: Date.now() };
+    st.messages.push(temp);
+    renderMessages();
+    scrollToBottom(true);
+
+    try {
+      const headers = { "Content-Type":"application/json" };
+      if (CURRENT.token) headers["Authorization"] = `Bearer ${CURRENT.token}`;
+
+      const res = await fetch(`${API_BASE}/api/messages`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        st.messages = st.messages.filter(m => m.id !== tempId);
+        renderMessages();
+        const j = await res.json().catch(()=>({}));
+        return alert(j.error || "not sent.");
+      }
+      const { id, ts } = await res.json().catch(()=>({}));
+      const i = st.messages.findIndex(m => m.id === tempId);
+      if (i !== -1) {
+        st.messages[i] = { ...st.messages[i], id: id || st.messages[i].id, ts: ts || st.messages[i].ts };
+        st.lastTs = Math.max(st.lastTs, st.messages[i].ts || 0);
+        renderMessages();
+        scrollToBottom(true);
+      }
+      $text.value = "";
+    } catch {
+      st.messages = st.messages.filter(m => m.id !== tempId);
+      renderMessages();
+      alert("network error");
+    }
+  });
+
+  $onlineToggle.addEventListener("click", ()=>{
+    $onlinePanel.classList.toggle("open");
+  });
+
+  $text.placeholder = CURRENT.nick ? `message as ${CURRENT.nick} in ${activeChannel}…` : `type a message in ${activeChannel}…`;
+  window.addEventListener('storage', (e)=>{
+    if (e.key === 'burak_user') {
+      CURRENT = getCurrentUser();
+      $text.placeholder = CURRENT.nick ? `message as ${CURRENT.nick} in ${activeChannel}…` : `type a message in ${activeChannel}…`;
+      renderChannels(channelList);
+      heartbeat();
+      fetchPresence();
+      fetchChannels();
+    }
+  });
+
+  /* ====== INIT ====== */
+  renderChannels(channelList);
+  await loadMessages(true);
+  setInterval(()=>loadMessages(false), 5000);
+
+  heartbeat();
+  setInterval(heartbeat, 10_000);
+
+  fetchPresence();
+  setInterval(fetchPresence, 10_000);
+
+  fetchChannels();
+  setInterval(fetchChannels, 15_000);
+
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.hidden){
+      setConn("idle");
+    }else{
+      setConn("online");
+      loadMessages();
+      fetchPresence();
+      heartbeat();
+      fetchChannels();
+    }
+  });
+  </script>
+</body>
+</html>
