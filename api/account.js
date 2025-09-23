@@ -1,94 +1,102 @@
-// apps/ch4t/api/account.js
-import { Redis } from "@upstash/redis";
+// /api/account.js
+import applyCORS from "./_cors.js";
 import jwt from "jsonwebtoken";
-import bcrypt from "bcryptjs";
-import cors from "./_cors.js"; 
+import { Client } from "pg";
 
-// ---- env guard
-const REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL || "";
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
-const JWT_SECRET  = process.env.JWT_SECRET || "";
+const hasDB = !!process.env.base_url;
 
-function bad(res, code = 400, error = "bad_request") {
-  res.status(code).json({ ok:false, error });
+function pg() {
+  return new Client({ connectionString: process.env.base_url });
 }
 
+function bad(res, code, error) {
+  res.status(code).json({ ok: false, error });
+}
 function ok(res, payload) {
-  res.status(200).json({ ok:true, ...payload });
+  res.status(200).json({ ok: true, ...payload });
 }
 
-function normalizeNick(n) {
-  // İstersen sadece küçük harfe zorla:
-  // return String(n||"").trim().toLowerCase().slice(0, 24);
-  // Veya görünümde büyük-küçük kalsın, anahtar için lowercase kullan:
-  return String(n||"").trim().slice(0, 24);
+function setCookie(res, nick) {
+  const token = jwt.sign({ sub: nick }, process.env.JWT_SECRET || "dev", {
+    expiresIn: "30d",
+  });
+
+  // Cross-site isteklerle sorunsuz olması için SameSite=None; Secure kullanıyoruz.
+  // Domain'i üst seviyeye vererek (".burak.wtf") subdomainler arası uyumu garantiliyoruz.
+  const cookie = [
+    `ch4t_token=${token}`,
+    `Path=/`,
+    `HttpOnly`,
+    `Secure`,
+    `SameSite=None`,
+    `Domain=.burak.wtf`,
+    `Max-Age=${60 * 60 * 24 * 30}`, // 30 gün
+  ].join("; ");
+
+  res.setHeader("Set-Cookie", cookie);
 }
 
-function redis() {
-  if (!REDIS_URL || !REDIS_TOKEN) return null;
-  return new Redis({ url: REDIS_URL, token: REDIS_TOKEN });
-}
-
-async function getUser(r, nick) {
-  const key = `user:${nick.toLowerCase()}`;   // anahtar normalize
-  const data = await r.hgetall(key);
-  if (!data || Object.keys(data).length === 0) return null;
-  return { nick: data.nick, passHash: data.passHash };
-}
-
-async function createUser(r, nick, pass) {
-  const key = `user:${nick.toLowerCase()}`;
-  const passHash = await bcrypt.hash(pass, 10);
-  await r.hset(key, { nick, passHash });
-}
-
-function makeToken(nick) {
-  if (!JWT_SECRET) return ""; // frontend bunu boş olabilir diye tolere ediyor ama tavsiye edilmez
-  return jwt.sign({ nick }, JWT_SECRET, { expiresIn: "30d" });
+async function ensureTables(client) {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      nick TEXT PRIMARY KEY,
+      pass TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
 }
 
 export default async function handler(req, res) {
-  // CORS
-  cors(res);
-  if (req.method === "OPTIONS") return res.status(200).end();
+  if (applyCORS(req, res)) return;
 
-  // DB hazır mı?
-  const r = redis();
-  if (!r) return bad(res, 500, "db_not_configured");
+  if (req.method !== "POST") {
+    return bad(res, 405, "method_not_allowed");
+  }
 
-  // Sadece POST (reserve/login birleştirilmiş akış)
-  if (req.method !== "POST") return bad(res, 405, "method_not_allowed");
+  let body = {};
+  try {
+    body = req.body && typeof req.body === "object" ? req.body : JSON.parse(req.body || "{}");
+  } catch (_) {
+    return bad(res, 400, "invalid_json");
+  }
+
+  const nick = String(body.nick || "").trim();
+  const pass = String(body.pass || "").trim();
+
+  if (!nick || !pass) return bad(res, 400, "nick_and_pass_required");
 
   try {
-    const { nick, pass } = (await (async()=>{
-      try { return await new Promise((resolve, reject)=>{
-        let body = "";
-        req.on("data", c => { body += c; });
-        req.on("end", ()=> { try { resolve(JSON.parse(body||"{}")); } catch(e){ resolve({}); } });
-        req.on("error", reject);
-      }); } catch { return {}; }
-    })());
+    if (!hasDB) {
+      // DB yoksa (local/dev) sadece token bas ve dön.
+      setCookie(res, nick);
+      return ok(res, { user: { nick } });
+    }
 
-    const n = normalizeNick(nick);
-    const p = String(pass || "");
+    const client = pg();
+    await client.connect();
+    try {
+      await ensureTables(client);
 
-    if (!n || !p) return bad(res, 400, "nick_and_pass_required");
+      const sel = await client.query("SELECT pass FROM accounts WHERE nick=$1", [nick]);
 
-    const user = await getUser(r, n);
-    if (!user) {
-      // Kayıt (reserve)
-      await createUser(r, n, p);
-      const token = makeToken(n);
-      return ok(res, { nick: n, token });
-    } else {
-      // Login (re-reserve gibi çalışır)
-      const okPw = await bcrypt.compare(p, user.passHash || "");
-      if (!okPw) return bad(res, 401, "wrong_password");
-      const token = makeToken(n);
-      return ok(res, { nick: n, token });
+      if (sel.rowCount === 0) {
+        // yeni kullanıcı oluştur
+        await client.query("INSERT INTO accounts(nick, pass) VALUES($1,$2)", [nick, pass]);
+        setCookie(res, nick);
+        return ok(res, { user: { nick }, created: true });
+      } else {
+        const dbPass = sel.rows[0].pass;
+        if (dbPass !== pass) {
+          return bad(res, 401, "wrong_password");
+        }
+        setCookie(res, nick);
+        return ok(res, { user: { nick } });
+      }
+    } finally {
+      await client.end();
     }
   } catch (e) {
-    // Hata durumunda frontend map'i düzgün gösterir
+    console.error("account error", e);
     return bad(res, 500, "server_error");
   }
 }
