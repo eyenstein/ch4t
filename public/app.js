@@ -1,24 +1,24 @@
-// public/app.js — terminal UI + sol panel; default kanal #wtf; nick input yok
+// public/app.js — monokrom terminal UI; #wtf ile açılır; opsiyonel kanal değişimi; nick input yok
 
 // ---- Ayarlar ----
-const API = "/api/messages"; // mevcut endpointin
-const CHANNELS = ["#wtf", "global", "lobby", "notes"]; // solda gösterilecekler
-let CURRENT = CHANNELS[0]; // ilk açılışta #wtf
+const API = "/api/messages";                // backend endpoint
+const CHANNELS = ["#wtf", "global", "lobby", "notes"]; // solda gösterilecek; tek kanal istersen ["#wtf"]
+let CURRENT = "#wtf";                        // her zaman #wtf ile başla
 
-// Daha önce seçilen kanal varsa onu kullan
+// Önceden seçilmiş kanal varsa ve listede bulunuyorsa, onu kullanmak istersen:
 try {
-  const saved = localStorage.getItem('ch4t_current_channel');
+  const saved = localStorage.getItem("ch4t_current_channel");
   if (saved && CHANNELS.includes(saved)) CURRENT = saved;
 } catch {}
 
-// İsteğe bağlı otomatik nick (yoksa anon)
+// Nick input yok — varsa localStorage.burak_user.nick kullanılır, yoksa "anon"
 function detectNick() {
   try {
-    const raw = localStorage.getItem('burak_user');
-    if (!raw) return '';
+    const raw = localStorage.getItem("burak_user");
+    if (!raw) return "";
     const obj = JSON.parse(raw);
-    return (obj && obj.nick && String(obj.nick).trim()) || '';
-  } catch { return ''; }
+    return (obj && obj.nick && String(obj.nick).trim()) || "";
+  } catch { return ""; }
 }
 
 // ---- Cache (kanala göre) ----
@@ -47,58 +47,57 @@ function saveCache(){
   } catch {}
 }
 
-// ---- DOM ----
-const $chans = document.getElementById('channels');
-const $titleChan = document.getElementById('titleChan');
-const $log  = document.getElementById('log');
-const $text = document.getElementById('text');
-const $send = document.getElementById('send');
-const $stats = document.getElementById('stats');
+// ---- DOM refs ----
+const $chans = document.getElementById("channels");
+const $titleChan = document.getElementById("titleChan");
+const $log  = document.getElementById("log");
+const $text = document.getElementById("text");
+const $send = document.getElementById("send");
+const $stats = document.getElementById("stats");
 
-// Sol paneli doldur
+// ---- Sol panel (kanal listesi) ----
 function renderChannels(){
   if (!$chans) return;
-  $chans.innerHTML = '';
+  $chans.innerHTML = "";
   CHANNELS.forEach(ch => {
-    const btn = document.createElement('div');
-    btn.className = 'chan' + (ch === CURRENT ? ' active' : '');
+    const btn = document.createElement("div");
+    btn.className = "chan" + (ch === CURRENT ? " active" : "");
     btn.textContent = ch;
     btn.onclick = () => switchChannel(ch);
     $chans.appendChild(btn);
   });
 }
-
-// Kanal değiştir
 async function switchChannel(ch){
   if (!CHANNELS.includes(ch)) return;
   CURRENT = ch;
-  try { localStorage.setItem('ch4t_current_channel', CURRENT); } catch {}
+  try { localStorage.setItem("ch4t_current_channel", CURRENT); } catch {}
   if ($titleChan) $titleChan.textContent = CURRENT;
   renderChannels();
   loadCache();
-  await loadHistory(); // sunucudan tam geçmiş
+  await loadHistory();  // yeni kanal geçmişini 0'dan getir
 }
 
 // ---- Render helpers ----
-function pad(n){ return String(n).padStart(2,'0'); }
+function pad(n){ return String(n).padStart(2,"0"); }
 function fmt(ts){
+  // Saat + tarih birlikte göster (fix)
   const d = new Date(ts);
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 function escapeHtml(s){
-  return (s||'').replace(/[&<>"']/g, c => (
-    { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]
+  return (s||"").replace(/[&<>"']/g, c => (
+    { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]
   ));
 }
 function lineEl(m){
-  const div = document.createElement('div');
-  div.className = 'line';
-  div.innerHTML = `<span class="ts">[${fmt(m.ts)}]</span> <span class="au">&lt;${escapeHtml(m.author)}&gt;</span> <span class="tx">${escapeHtml(m.text)}</span>`;
+  const div = document.createElement("div");
+  div.className = "line";
+  div.innerHTML = `<span class="ts">[${fmt(m.ts)}]</span> <span class="au">&lt;${escapeHtml(m.author || "anon")}&gt;</span> <span class="tx">${escapeHtml(m.text || "")}</span>`;
   return div;
 }
 function renderAll(list){
   if ($log) {
-    $log.innerHTML = '';
+    $log.innerHTML = "";
     list.forEach(m => $log.appendChild(lineEl(m)));
     $log.scrollTop = $log.scrollHeight;
   }
@@ -116,10 +115,10 @@ function renderStats(){
   const uniq = new Set();
   let nick = 0, anon = 0;
   for (const m of MESSAGES) {
-    if (!uniq.has(m.author)) {
-      uniq.add(m.author);
-      if ((m.author || '').toLowerCase() === 'anon') anon++;
-      else nick++;
+    const who = (m.author || "").trim() || "anon";
+    if (!uniq.has(who)) {
+      uniq.add(who);
+      if (who.toLowerCase() === "anon") anon++; else nick++;
     }
   }
   $stats.textContent = `messages: ${MESSAGES.length} · nick: ${nick} · anon: ${anon}`;
@@ -143,7 +142,6 @@ async function loadHistory(){
     }
   } catch (e) {}
 }
-
 async function pollNew(){
   const url = `${API}?channel=${encodeURIComponent(CURRENT)}&since=${LAST_TS}&limit=1000`;
   try {
@@ -157,18 +155,17 @@ async function pollNew(){
     }
   } catch (e) {}
 }
-
 async function sendMessage(){
-  const text = ($text?.value || '').trim();
+  const text = ($text?.value || "").trim();
   if (!text) return;
 
   const nick = detectNick();
-  const author = nick || 'anon';
+  const author = nick || "anon";
 
   try {
     const res = await fetch(API, {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
       body: JSON.stringify({ channel: CURRENT, author, text })
     });
     const json = await res.json();
@@ -177,7 +174,7 @@ async function sendMessage(){
       LAST_TS = Math.max(LAST_TS, json.message.ts);
       renderAppend([json.message]);
       saveCache();
-      if ($text) $text.value = '';
+      if ($text) $text.value = "";
     }
   } catch (e) {}
 }
@@ -185,21 +182,16 @@ async function sendMessage(){
 // ---- Events ----
 if ($send) $send.onclick = sendMessage;
 if ($text) {
-  $text.addEventListener('keydown', (e)=>{
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-    if ((e.key === 'Enter') && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault();
-      sendMessage();
-    }
+  // Enter ya da Cmd/Ctrl+Enter ile gönder
+  $text.addEventListener("keydown", (e)=>{
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    if ((e.key === "Enter") && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendMessage(); }
   });
 }
 
 // ---- Boot ----
 renderChannels();
-document.getElementById('titleChan').textContent = CURRENT;
+document.getElementById("titleChan").textContent = CURRENT;
 loadCache();
 loadHistory();
 setInterval(pollNew, 1200);
