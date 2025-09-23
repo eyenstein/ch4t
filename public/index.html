@@ -34,8 +34,18 @@
   .ts{color:var(--mut)}
   .au{color:var(--fg)}
   .tx{color:var(--fg)}
-  .msg-del{margin-left:6px;cursor:pointer;user-select:none;opacity:.6}
+
+  /* admin silme ikonu başlangıçta gizli */
+  .msg-del {
+    display:none;
+    margin-left:6px;
+    cursor:pointer;
+    user-select:none;
+    opacity:.6;
+  }
   .msg-del:hover{opacity:1}
+  /* admin token aktifken görünür */
+  html[data-admin="1"] .msg-del{display:inline}
 
   footer{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg)}
   #text{flex:1;background:var(--card);color:var(--fg);border:1px solid var(--btn-bd);

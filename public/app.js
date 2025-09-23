@@ -3,7 +3,7 @@ const API_BASE = "";                 // aynı origin: /api/...
 const DEFAULT_CHAN = "wtf";
 
 // ===== State =====
-let CURRENT = getCurrentUser();      // { nick?, pass? } varsa
+let CURRENT = getCurrentUser();      // { nick?, pass? }
 let CH = DEFAULT_CHAN;
 let LIST = [];
 let LAST_TS = 0;
@@ -22,9 +22,7 @@ function fmt2(n){ return String(n).padStart(2,"0"); }
 function fmtTs(ms){
   if (!ms || isNaN(ms)) return "??";
   const d = new Date(ms);
-  const Y=d.getFullYear(), M=fmt2(d.getMonth()+1), D=fmt2(d.getDate());
-  const h=fmt2(d.getHours()), m=fmt2(d.getMinutes()), s=fmt2(d.getSeconds());
-  return `${Y}-${M}-${D} ${h}:${m}:${s}`;
+  return `${d.getFullYear()}-${fmt2(d.getMonth()+1)}-${fmt2(d.getDate())} ${fmt2(d.getHours())}:${fmt2(d.getMinutes())}:${fmt2(d.getSeconds())}`;
 }
 function getCurrentUser(){
   try { return JSON.parse(localStorage.getItem("burak_user")||"{}"); } catch { return {}; }
@@ -45,6 +43,16 @@ function getValidAdminToken(){
   }catch{ return null; }
 }
 function isAdminMode(){ return !!getValidAdminToken(); }
+
+// ===== Admin UI sync =====
+function syncAdminUI(){
+  const on = isAdminMode();
+  if (on) document.documentElement.setAttribute("data-admin","1");
+  else document.documentElement.removeAttribute("data-admin");
+
+  const b = document.getElementById("btn-bll");
+  if (b) b.textContent = on ? "bll • ON" : "bll";
+}
 
 // ===== UI: channels =====
 function renderChannels(){
@@ -67,15 +75,14 @@ function renderOne(msg){
   const ts  = el("span","ts", `[${fmtTs(msg.ts)}]`);
   const au  = el("span","au", ` <${msg.author || "anon"}>`);
   const tx  = el("span","tx", ` ${msg.text}`);
-
   row.append(ts, au, tx);
 
-  if (isAdminMode()){
-    const del = el("span","msg-del"," –");
-    del.title = "delete message";
-    del.addEventListener("click",(e)=>{ e.stopPropagation(); deleteMessage(msg.id); });
-    row.appendChild(del);
-  }
+  // her zaman ekliyoruz; görünürlük CSS'ten
+  const del = el("span","msg-del"," –");
+  del.title = "delete message";
+  del.addEventListener("click",(e)=>{ e.stopPropagation(); deleteMessage(msg.id); });
+  row.appendChild(del);
+
   return row;
 }
 
@@ -101,7 +108,6 @@ async function pull(reset=false){
     const res = await fetch(url.toString(), { method:"GET", credentials:"include" });
     if (!res.ok) return;
     const j = await res.json();
-    // beklenen shape: { ok:true, list:[{id,ts,author,text}], lastTs:number }
     if (!j || !j.ok) return;
     if (reset) LIST = j.list || [];
     else LIST = LIST.concat(j.list || []);
@@ -119,7 +125,6 @@ async function sendMessage(text){
     });
     const j = await res.json().catch(()=>({}));
     if (!res.ok || !j.ok) throw new Error(j.error || "send_failed");
-    // başarılıysa hızlı ekle
     LIST.push(j.item || { id:j.id, ts:Date.now(), author:CURRENT?.nick, text });
     renderList();
   }catch(e){ console.error(e); alert("not send"); }
@@ -127,7 +132,7 @@ async function sendMessage(text){
 
 async function deleteMessage(id){
   const tok = getValidAdminToken();
-  if (!tok){ alert("Admin token expired."); renderList(); return; }
+  if (!tok){ alert("Admin token expired."); syncAdminUI(); renderList(); return; }
   try{
     const res = await fetch(`${API_BASE}/api/messages/${encodeURIComponent(id)}`,{
       method:"DELETE",
@@ -135,7 +140,7 @@ async function deleteMessage(id){
     });
     const j = await res.json().catch(()=>({}));
     if (!res.ok || !j.ok){
-      if (res.status===401 || res.status===403){ clearAdminToken(); alert("Invalid token."); renderList(); return; }
+      if (res.status===401 || res.status===403){ clearAdminToken(); syncAdminUI(); renderList(); return; }
       throw new Error(j.error || "delete_failed");
     }
     const i = LIST.findIndex(m=>m.id===id);
@@ -144,21 +149,17 @@ async function deleteMessage(id){
   }catch(e){ console.error(e); alert("delete failed"); }
 }
 
-function authHeader(){
-  // varsa hesabın header’ı—yoksa boş döner
-  // örnek: JWT vs. önceki kodundaki gibi CURRENT.pass kullanıyorsan buraya koy
-  return {};
-}
+function authHeader(){ return {}; }
 
 // ===== Events =====
 document.getElementById("btn-bll")?.addEventListener("click", ()=>{
   const existing = getValidAdminToken();
   if (existing){
-    if (confirm("Admin token aktif. Kaldırılsın mı?")){ clearAdminToken(); renderList(); }
+    if (confirm("Admin token aktif. Kaldırılsın mı?")){ clearAdminToken(); syncAdminUI(); renderList(); }
     return;
   }
   const t = prompt("Admin delete token:");
-  if (t && t.trim()){ setAdminToken(t.trim()); renderList(); }
+  if (t && t.trim()){ setAdminToken(t.trim()); syncAdminUI(); renderList(); }
 });
 
 $send.addEventListener("click", ()=>{
@@ -181,4 +182,6 @@ renderChannels();
 $title.textContent = `#${CH}`;
 $text.placeholder = CURRENT?.nick ? `message as ${CURRENT.nick}…` : `type a message in #${CH}…`;
 pull(true);
-setInterval(()=>pull(false), 2000); // hafif polling
+setInterval(()=>pull(false), 2000);
+setInterval(syncAdminUI, 5000);
+syncAdminUI();
