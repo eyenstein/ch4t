@@ -4,227 +4,56 @@
 <meta charset="utf-8" />
 <meta name="viewport"
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>ch4t</title>
+<title>ch4t · #wtf</title>
+<link rel="stylesheet" href="./style.css">
 <style>
-  :root { --bg:#0b1220; --fg:#e6ebff; --sub:#8ea0d0; --card:#111a2e; --mut:#6b7aa8; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-  .wrap { display:flex; flex-direction:column; height:100vh; }
-  header { padding:10px 14px; display:flex; gap:10px; align-items:center; background:#0e1730; position:sticky; top:0; z-index:10; }
-  header input, header button, header select {
-    background:#0b142b; color:var(--fg); border:1px solid #223056; border-radius:10px; padding:8px 10px; outline:none;
-  }
-  header button { cursor:pointer; }
-  header .live { color:var(--sub); font-family:monospace; opacity:.9; }
-  main { flex:1; overflow:auto; padding:16px; }
-  .msg { background:var(--card); border:1px solid #1b2747; border-radius:14px; padding:10px 12px; margin:8px 0; }
-  .meta { font-size:12px; color:var(--mut); display:flex; gap:10px; }
-  .text { white-space:pre-wrap; word-break:break-word; margin-top:4px; }
-  footer { padding:12px; background:#0e1730; display:flex; gap:8px; }
-  footer input, footer button, footer textarea {
-    background:#0b142b; color:var(--fg); border:1px solid #223056; border-radius:10px; padding:10px;
-  }
-  footer textarea { flex:1; resize:none; height:46px; }
-  footer button { cursor:pointer; min-width:110px; }
-  .row { display:flex; gap:8px; align-items:center; }
-  .grow { flex:1; }
+  /* Terminal vibe + layout (gerekli minimum eklemeler) */
+  html, body { margin:0; height:100%; background:#000; color:#cbe8cb; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+  .layout { display:flex; height:100vh; }
+  .sidebar { width:220px; border-right:1px solid #0a0; background:#000; display:flex; flex-direction:column; }
+  .sb-head { padding:10px 12px; color:#7fff7f; border-bottom:1px solid #0a0; }
+  .channels { flex:1; overflow:auto; padding:8px 6px; }
+  .chan { padding:8px 10px; margin:4px 6px; border:1px solid #0a0; border-radius:6px; cursor:pointer; color:#7fbf7f; background:#001900; }
+  .chan.active { color:#cbe8cb; background:#003000; }
+  .main { flex:1; display:flex; flex-direction:column; }
+  header { padding:8px 12px; border-bottom:1px solid #0a0; background:#000; position:sticky; top:0; }
+  header .title { color:#7fff7f; }
+  header .meta  { color:#7fbf7f; opacity:.9; }
+  main { flex:1; overflow:auto; padding:10px 12px; }
+  .line { white-space:pre-wrap; word-break:break-word; }
+  .ts   { color:#55aa55 }
+  .au   { color:#88ff88 }
+  .tx   { color:#cbe8cb }
+  footer { display:flex; gap:8px; padding:10px 12px; border-top:1px solid #0a0; background:#000; }
+  #text { flex:1; background:#001900; color:#cbe8cb; border:1px solid #0a0; padding:8px 10px; border-radius:6px; outline:none; }
+  #send { background:#002b00; color:#7fff7f; border:1px solid #0a0; padding:8px 12px; border-radius:6px; cursor:pointer; }
+  #send:active { transform: translateY(1px); }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <span>channel:</span>
-    <input id="chan" placeholder="global" style="width:160px">
-    <button id="useChan">use</button>
-    <span class="live" id="chanLive"></span>
-    <div style="flex:1"></div>
-    <span>nick:</span>
-    <input id="nick" placeholder="Your name" style="width:160px">
-    <button id="saveNick">save</button>
-  </header>
+<div class="layout">
+  <!-- SOL PANEL (kanallar) -->
+  <aside class="sidebar">
+    <div class="sb-head">/channels</div>
+    <div id="channels" class="channels"></div>
+  </aside>
 
-  <main id="list"></main>
+  <!-- ANA PANEL -->
+  <section class="main">
+    <header>
+      <div class="title">~/ch4t <span class="ts">|</span> channel: <b id="titleChan">#wtf</b></div>
+      <div class="meta" id="stats">messages: 0 · nick: 0 · anon: 0</div>
+    </header>
 
-  <footer>
-    <textarea id="text" placeholder="type a message…"></textarea>
-    <button id="send">Send</button>
-  </footer>
+    <main id="log"></main>
+
+    <footer>
+      <input id="text" placeholder="type and press Enter (⌘/Ctrl+Enter to send)" />
+      <button id="send">Send</button>
+    </footer>
+  </section>
 </div>
 
-<script>
-  // ---------- Simple state & cache ----------
-  function getChannel(){ return localStorage.getItem('ch4t_channel') || 'global'; }
-  function setChannel(v){ localStorage.setItem('ch4t_channel', v || 'global'); }
-  function getNick(){ return localStorage.getItem('ch4t_nick') || ''; }
-  function setNick(v){ localStorage.setItem('ch4t_nick', (v||'').trim()); }
-
-  function cacheKey(ch){ return `ch4t_cache_${ch}`; }
-
-  let LAST_TS = 0;
-  let MESSAGES = [];
-
-  function loadCache(){
-    const ch = getChannel();
-    try {
-      const raw = localStorage.getItem(cacheKey(ch));
-      if (raw) {
-        const data = JSON.parse(raw);
-        MESSAGES = data.messages || [];
-        LAST_TS  = data.lastTs || 0;
-        renderAll(MESSAGES);
-      } else {
-        MESSAGES = [];
-        LAST_TS = 0;
-        renderAll([]);
-      }
-    } catch {
-      MESSAGES = []; LAST_TS = 0; renderAll([]);
-    }
-  }
-  function saveCache(){
-    const ch = getChannel();
-    try {
-      localStorage.setItem(cacheKey(ch), JSON.stringify({ messages: MESSAGES, lastTs: LAST_TS }));
-    } catch {}
-  }
-
-  // ---------- DOM refs ----------
-  const $list = document.getElementById('list');
-  const $chan = document.getElementById('chan');
-  const $use  = document.getElementById('useChan');
-  const $live = document.getElementById('chanLive');
-  const $nick = document.getElementById('nick');
-  const $saveNick = document.getElementById('saveNick');
-  const $text = document.getElementById('text');
-  const $send = document.getElementById('send');
-
-  function syncHeader(){
-    $chan.value = getChannel();
-    $nick.value = getNick();
-    $text.placeholder = getNick() ? `message as ${getNick()}…` : 'type a message…';
-    $live.textContent = `using: ${getChannel()}`;
-  }
-
-  // ---------- Render ----------
-  function fmtTime(ts){
-    const d = new Date(ts);
-    const pad = (n)=> String(n).padStart(2,'0');
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
-
-  function msgEl(m){
-    const div = document.createElement('div');
-    div.className = 'msg';
-    div.innerHTML = `
-      <div class="meta"><span>${m.author}</span><span>·</span><span>${fmtTime(m.ts)}</span></div>
-      <div class="text"></div>
-    `;
-    div.querySelector('.text').textContent = m.text || '';
-    return div;
-  }
-
-  function renderAll(list){
-    $list.innerHTML = '';
-    list.forEach(m => $list.appendChild(msgEl(m)));
-    $list.scrollTop = $list.scrollHeight;
-  }
-
-  function renderAppend(list){
-    list.forEach(m => $list.appendChild(msgEl(m)));
-    $list.scrollTop = $list.scrollHeight;
-  }
-
-  // ---------- API ----------
-  async function loadHistory(){
-    const ch = getChannel();
-    LAST_TS = 0;
-    MESSAGES = [];
-    renderAll([]);
-    try {
-      const res = await fetch(`/api/messages?channel=${encodeURIComponent(ch)}&since=0&limit=1000`);
-      const json = await res.json();
-      if (json.ok) {
-        MESSAGES = json.list || [];
-        LAST_TS  = json.lastTs || 0;
-        renderAll(MESSAGES);
-        saveCache();
-      }
-    } catch (e) {
-      console.warn('loadHistory error', e);
-    }
-  }
-
-  async function pollNew(){
-    const ch = getChannel();
-    try {
-      const res = await fetch(`/api/messages?channel=${encodeURIComponent(ch)}&since=${LAST_TS}&limit=500`);
-      const json = await res.json();
-      if (json.ok && json.list && json.list.length) {
-        MESSAGES = MESSAGES.concat(json.list);
-        LAST_TS  = Math.max(LAST_TS, json.lastTs || LAST_TS);
-        renderAppend(json.list);
-        saveCache();
-      }
-    } catch (e) {
-      // ağ hatası sessiz geç
-    }
-  }
-
-  async function sendMessage(){
-    const author = (getNick() || 'anon').trim();
-    const text   = ($text.value || '').trim();
-    if (!text) return;
-
-    const ch = getChannel();
-    try {
-      const res = await fetch('/api/messages', {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ channel: ch, author, text })
-      });
-      const json = await res.json();
-      if (json.ok && json.message) {
-        MESSAGES.push(json.message);
-        LAST_TS = Math.max(LAST_TS, json.message.ts);
-        renderAppend([json.message]);
-        saveCache();
-        $text.value = '';
-      } else {
-        alert(json.error || 'send_failed');
-      }
-    } catch (e) {
-      alert('network_error');
-    }
-  }
-
-  // ---------- Events ----------
-  $use.onclick = async ()=>{
-    setChannel($chan.value.trim() || 'global');
-    syncHeader();
-    loadCache();
-    await loadHistory();
-  };
-  $saveNick.onclick = ()=>{
-    setNick($nick.value);
-    syncHeader();
-  };
-  $text.addEventListener('keydown', (e)=>{
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      sendMessage();
-    }
-  });
-  $send.onclick = sendMessage;
-
-  window.addEventListener('storage', (e)=>{
-    if (e.key === 'ch4t_channel') { syncHeader(); loadCache(); loadHistory(); }
-    if (e.key === 'ch4t_nick')    { syncHeader(); }
-  });
-
-  // ---------- Boot ----------
-  syncHeader();
-  loadCache();     // refresh sonrası geçmişi göster
-  loadHistory();   // sunucudan geçmişi çek
-  setInterval(pollNew, 1500); // yeni mesajları getir
-</script>
+<script src="./app.js"></script>
 </body>
 </html>

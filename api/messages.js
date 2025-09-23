@@ -3,22 +3,19 @@ import { Client } from "pg";
 import cors from "./_cors.js";
 import crypto from "crypto";
 
-const DEFAULT_CHANNEL = "#wtf";                 // 🔒 UI bu kanalı kullanıyor
+const DEFAULT_CHANNEL = "#wtf"; // 🔒 varsayılan kanal
 const hasDB = !!process.env.base_url;
 const allowDelete = process.env.ALLOW_DELETE === "true";
 
-// RAM fallback (kanal -> { list:[], lastTs })
-const mem = { byCh: new Map() };
+const mem = { byCh: new Map() }; // RAM fallback
 
 function now() { return Date.now(); }
 function uid() { return crypto?.randomUUID ? crypto.randomUUID()
   : (Math.random().toString(36).slice(2) + Date.now().toString(36)); }
-
 function ensureMem(ch) {
   if (!mem.byCh.has(ch)) mem.byCh.set(ch, { list: [], lastTs: 0 });
   return mem.byCh.get(ch);
 }
-
 function pg() { return new Client({ connectionString: process.env.base_url }); }
 function bad(res, code, error) { res.status(code).json({ ok:false, error }); }
 function ok(res, payload = {}) { res.status(200).json({ ok:true, ...payload }); }
@@ -39,7 +36,7 @@ export default async function handler(req, res) {
     });
   }
 
-  // --- GET /api/messages?channel=&since=&limit=
+  // GET
   if (req.method === "GET") {
     const since = Number(url.searchParams.get("since") || 0);
     const limit = Math.max(1, Math.min(2000, Number(url.searchParams.get("limit") || 1000)));
@@ -75,7 +72,7 @@ export default async function handler(req, res) {
     }
   }
 
-  // --- POST /api/messages  (JSON: {author?, text, channel?})
+  // POST
   if (req.method === "POST") {
     let data = {};
     try { data = JSON.parse(body || "{}"); } catch { return bad(res, 400, "invalid_json"); }
@@ -83,7 +80,6 @@ export default async function handler(req, res) {
     const ch = String((data.channel || channel || DEFAULT_CHANNEL)).trim();
     const author = String(data.author || "").trim() || "anon";
     const text   = String(data.text   || "").trim();
-
     if (!text) return bad(res, 400, "text_required");
 
     const doc = { id: uid(), channel: ch, author, text, ts: now() };
@@ -112,7 +108,7 @@ export default async function handler(req, res) {
     }
   }
 
-  // --- DELETE /api/messages?channel=...
+  // DELETE
   if (req.method === "DELETE") {
     if (!allowDelete) return bad(res, 403, "delete_disabled");
 

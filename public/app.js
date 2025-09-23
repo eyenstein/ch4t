@@ -1,10 +1,17 @@
-// public/app.js — terminal UI, #wtf kanalı, nick input yok; geçmiş + sayım + polling
+// public/app.js — terminal UI + sol panel; default kanal #wtf; nick input yok
 
-// ---- Sabitler ----
-const CHANNEL = "#wtf";
-const API = "/api/messages"; // API path mevcut dosyana göre
+// ---- Ayarlar ----
+const API = "/api/messages"; // mevcut endpointin
+const CHANNELS = ["#wtf", "global", "lobby", "notes"]; // solda gösterilecekler
+let CURRENT = CHANNELS[0]; // ilk açılışta #wtf
 
-// İsteğe bağlı otomatik nick: localStorage.burak_user.nick varsa kullan, yoksa "anon"
+// Daha önce seçilen kanal varsa onu kullan
+try {
+  const saved = localStorage.getItem('ch4t_current_channel');
+  if (saved && CHANNELS.includes(saved)) CURRENT = saved;
+} catch {}
+
+// İsteğe bağlı otomatik nick (yoksa anon)
 function detectNick() {
   try {
     const raw = localStorage.getItem('burak_user');
@@ -14,14 +21,14 @@ function detectNick() {
   } catch { return ''; }
 }
 
-// ---- Cache (localStorage) ----
-function cacheKey(){ return `ch4t_cache_${CHANNEL}`; }
+// ---- Cache (kanala göre) ----
+function cacheKey(ch){ return `ch4t_cache_${ch}`; }
 let LAST_TS = 0;
 let MESSAGES = [];
 
 function loadCache(){
   try {
-    const raw = localStorage.getItem(cacheKey());
+    const raw = localStorage.getItem(cacheKey(CURRENT));
     if (raw) {
       const data = JSON.parse(raw);
       MESSAGES = data.messages || [];
@@ -36,15 +43,41 @@ function loadCache(){
 }
 function saveCache(){
   try {
-    localStorage.setItem(cacheKey(), JSON.stringify({ messages: MESSAGES, lastTs: LAST_TS }));
+    localStorage.setItem(cacheKey(CURRENT), JSON.stringify({ messages: MESSAGES, lastTs: LAST_TS }));
   } catch {}
 }
 
 // ---- DOM ----
+const $chans = document.getElementById('channels');
+const $titleChan = document.getElementById('titleChan');
 const $log  = document.getElementById('log');
 const $text = document.getElementById('text');
 const $send = document.getElementById('send');
 const $stats = document.getElementById('stats');
+
+// Sol paneli doldur
+function renderChannels(){
+  if (!$chans) return;
+  $chans.innerHTML = '';
+  CHANNELS.forEach(ch => {
+    const btn = document.createElement('div');
+    btn.className = 'chan' + (ch === CURRENT ? ' active' : '');
+    btn.textContent = ch;
+    btn.onclick = () => switchChannel(ch);
+    $chans.appendChild(btn);
+  });
+}
+
+// Kanal değiştir
+async function switchChannel(ch){
+  if (!CHANNELS.includes(ch)) return;
+  CURRENT = ch;
+  try { localStorage.setItem('ch4t_current_channel', CURRENT); } catch {}
+  if ($titleChan) $titleChan.textContent = CURRENT;
+  renderChannels();
+  loadCache();
+  await loadHistory(); // sunucudan tam geçmiş
+}
 
 // ---- Render helpers ----
 function pad(n){ return String(n).padStart(2,'0'); }
@@ -85,7 +118,8 @@ function renderStats(){
   for (const m of MESSAGES) {
     if (!uniq.has(m.author)) {
       uniq.add(m.author);
-      if ((m.author || '').toLowerCase() === 'anon') anon++; else nick++;
+      if ((m.author || '').toLowerCase() === 'anon') anon++;
+      else nick++;
     }
   }
   $stats.textContent = `messages: ${MESSAGES.length} · nick: ${nick} · anon: ${anon}`;
@@ -97,7 +131,7 @@ async function loadHistory(){
   MESSAGES = [];
   renderAll([]);
 
-  const url = `${API}?channel=${encodeURIComponent(CHANNEL)}&since=0&limit=2000`;
+  const url = `${API}?channel=${encodeURIComponent(CURRENT)}&since=0&limit=2000`;
   try {
     const res = await fetch(url);
     const json = await res.json();
@@ -107,13 +141,11 @@ async function loadHistory(){
       renderAll(MESSAGES);
       saveCache();
     }
-  } catch (e) {
-    // sessiz geç
-  }
+  } catch (e) {}
 }
 
 async function pollNew(){
-  const url = `${API}?channel=${encodeURIComponent(CHANNEL)}&since=${LAST_TS}&limit=1000`;
+  const url = `${API}?channel=${encodeURIComponent(CURRENT)}&since=${LAST_TS}&limit=1000`;
   try {
     const res = await fetch(url);
     const json = await res.json();
@@ -137,7 +169,7 @@ async function sendMessage(){
     const res = await fetch(API, {
       method:'POST',
       headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify({ channel: CHANNEL, author, text })
+      body: JSON.stringify({ channel: CURRENT, author, text })
     });
     const json = await res.json();
     if (json.ok && json.message) {
@@ -154,7 +186,6 @@ async function sendMessage(){
 if ($send) $send.onclick = sendMessage;
 if ($text) {
   $text.addEventListener('keydown', (e)=>{
-    // Enter veya Cmd/Ctrl+Enter ile gönder
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -167,6 +198,8 @@ if ($text) {
 }
 
 // ---- Boot ----
-loadCache();      // refresh sonrası geçmişi göster
-loadHistory();    // sunucudan tam geçmiş
-setInterval(pollNew, 1200); // yeni mesajları getir
+renderChannels();
+document.getElementById('titleChan').textContent = CURRENT;
+loadCache();
+loadHistory();
+setInterval(pollNew, 1200);
