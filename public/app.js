@@ -9,6 +9,13 @@ let CURRENT_CH = DEFAULT_CHANNEL;
 let SINCE = 0;                            // long-poll için
 let LIST = [];                            // ekranda gösterilen mesajlar
 
+// Kullanıcının girdiği/“bildiği” kanalları localStorage’da tut
+const LS_MY_CHANNELS = "my_channels";
+let KNOWN_CHANNELS = new Set(
+  JSON.parse(localStorage.getItem(LS_MY_CHANNELS) || "[]")
+);
+if (!KNOWN_CHANNELS.has(DEFAULT_CHANNEL)) KNOWN_CHANNELS.add(DEFAULT_CHANNEL);
+
 // ----- dom -----
 const $titleChan = document.getElementById("titleChan");
 const $stats     = document.getElementById("stats");
@@ -31,6 +38,10 @@ function el(tag, cls, text) {
   if (cls) e.className = cls;
   if (text != null) e.textContent = text;
   return e;
+}
+
+function saveKnownChannels() {
+  localStorage.setItem(LS_MY_CHANNELS, JSON.stringify([...KNOWN_CHANNELS]));
 }
 
 function renderOne(msg) {
@@ -60,12 +71,24 @@ function updateStats() {
 }
 
 function setChannel(ch) {
-  CURRENT_CH = ch;
-  $titleChan.textContent = ch;
+  // kanal ismini güvene al (#, harf/rakam ve basit ayırıcılar)
+  const safe = String(ch).trim().replace(/[^#A-Za-z0-9:\-_|]/g, "");
+  if (!safe) return;
+
+  CURRENT_CH = safe;
+  $titleChan.textContent = safe;
   SINCE = 0;         // kanalı değiştirince baştan çek
   LIST = [];
   renderList();
   updateStats();
+
+  // Bu kanalı kullanıcı “öğrendi” → sidebar'a eklenmeli
+  KNOWN_CHANNELS.add(safe);
+  saveKnownChannels();
+  renderChannels();
+
+  // input placeholder güncelle
+  if ($text) $text.placeholder = `type a message in ${safe}…`;
 }
 
 // ----- api -----
@@ -124,7 +147,7 @@ $send.addEventListener("click", async () => {
   try {
     await postMessage(text, author, token);
     $text.value = "";
-    // Kendimizi beklemeden optimistic append yapmak istersen:
+    // İstersen optimistic append:
     // LIST.push({ id: `local-${Date.now()}`, channel: CURRENT_CH, author, text, ts: Date.now() });
     // renderList(); updateStats();
   } catch (e) {
@@ -140,11 +163,10 @@ $text.addEventListener("keydown", (e) => {
   }
 });
 
-// Channels (tek kanal istiyorsun; yine de tıklanabilir liste bırakıyorum)
+// ----- channels (sadece kullanıcının girdiği/bildiği kanallar) -----
 function renderChannels() {
   $channels.innerHTML = "";
-  const items = [DEFAULT_CHANNEL]; // istersen DM’leri burada ekleyebilirsin
-  for (const ch of items) {
+  for (const ch of KNOWN_CHANNELS) {
     const btn = el("div", "chan" + (ch === CURRENT_CH ? " active" : ""), ch);
     btn.addEventListener("click", () => {
       if (ch !== CURRENT_CH) {
@@ -156,6 +178,105 @@ function renderChannels() {
     $channels.appendChild(btn);
   }
 }
+
+// ----- teleport bar (kanal yarat/ışınlan) -----
+(function addTeleportBar(){
+  const header = document.querySelector("header") || document.body;
+
+  const wrap = document.createElement("div");
+  wrap.style.display = "flex";
+  wrap.style.alignItems = "center";
+  wrap.style.gap = "6px";
+  wrap.style.margin = "6px 0 0 12px";
+
+  const inp = document.createElement("input");
+  inp.id = "teleportInput";
+  inp.placeholder = "tp #channel  |  #channel";
+  inp.style.padding = "6px 8px";
+  inp.style.borderRadius = "6px";
+  inp.style.background = "var(--card, #0b1220)";
+  inp.style.color = "var(--fg, #e6e6e6)";
+  inp.style.border = "1px solid var(--line, #222)";
+  inp.style.minWidth = "180px";
+
+  const btn = document.createElement("button");
+  btn.id = "teleportBtn";
+  btn.textContent = "tp";
+  btn.style.padding = "6px 10px";
+  btn.style.borderRadius = "6px";
+  btn.style.cursor = "pointer";
+  btn.style.background = "var(--btn, #111)";
+  btn.style.color = "var(--fg, #e6e6e6)";
+  btn.style.border = "1px solid var(--btn-bd, #333)";
+
+  wrap.appendChild(inp);
+  wrap.appendChild(btn);
+
+  if (header.tagName && header.tagName.toLowerCase() === "header") {
+    header.appendChild(wrap);
+  } else {
+    document.body.insertBefore(wrap, document.body.firstChild);
+  }
+
+  function parseTeleport(text) {
+    if (!text) return null;
+    const t = text.trim();
+    const parts = t.split(/\s+/);
+
+    // öncelik: doğrudan #channel geçen parça
+    for (const p of parts) if (p.startsWith("#")) return p;
+
+    // "tp foo" → #foo
+    if (parts.length >= 2 && parts[0].toLowerCase() === "tp") {
+      let ch = parts[1];
+      if (!ch.startsWith("#")) ch = "#" + ch;
+      return ch;
+    }
+    // "foo tp" → #foo
+    if (parts.length >= 2 && parts[parts.length - 1].toLowerCase() === "tp") {
+      let ch = parts[0];
+      if (!ch.startsWith("#")) ch = "#" + ch;
+      return ch;
+    }
+    // tek kelime → #ekle
+    if (parts.length === 1) {
+      let ch = parts[0];
+      if (!ch.startsWith("#")) ch = "#" + ch;
+      return ch;
+    }
+    return null;
+  }
+
+  function flashMsg(text, color = "#9ae6b4") {
+    const f = document.createElement("div");
+    f.textContent = text;
+    f.style.position = "fixed";
+    f.style.right = "16px";
+    f.style.top = "16px";
+    f.style.background = "rgba(0,0,0,0.6)";
+    f.style.color = color;
+    f.style.padding = "8px 10px";
+    f.style.borderRadius = "6px";
+    f.style.zIndex = 9999;
+    document.body.appendChild(f);
+    setTimeout(()=> f.remove(), 1500);
+  }
+
+  async function doTeleport(rawText) {
+    const ch = parseTeleport(rawText);
+    if (!ch) { flashMsg("invalid channel", "#f6a6a6"); return; }
+    setChannel(ch);             // kanal yarat/ışınlan
+    // ilk fetch tetiklemesi gerekirse (poll zaten çalışıyor ama hızlı görünüm için):
+    try { await fetchMessages(); } catch {}
+    flashMsg("teleported to " + ch);
+    inp.value = "";
+  }
+
+  btn.addEventListener("click", () => doTeleport(inp.value));
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); doTeleport(inp.value); }
+  });
+})();
 
 // ----- poll loop -----
 async function loop() {
@@ -174,7 +295,7 @@ async function loop() {
 
 // ----- boot -----
 renderChannels();
-setChannel(DEFAULT_CHANNEL);
+setChannel(CURRENT_CH);   // DEFAULT_CHANNEL zaten KNOWN_CHANNELS'ta
 loop().catch(console.error);
 
 // placeholder’ı nick’e göre güncelle (opsiyonel)
