@@ -12,12 +12,12 @@
     --btn:#111; --btn-bd:#333;
   }
   html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
-    font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;}
+    font-family: ui-monospace,monospace;}
   .layout{display:flex;height:100vh}
 
   /* Sol panel */
   .sidebar{width:220px;border-right:1px solid var(--line);background:var(--bg);display:flex;flex-direction:column}
-  .sb-head{padding:10px 12px;color:var(--mut);border-bottom:1px solid var(--line);letter-spacing:.3px}
+  .sb-head{padding:10px 12px;color:var(--mut);border-bottom:1px solid var(--line)}
   .channels{flex:1;overflow:auto;padding:8px 6px}
   .chan{padding:8px 10px;margin:4px 6px;border:1px solid var(--line);border-radius:6px;cursor:pointer;color:var(--fg);background:var(--card)}
   .chan.active{border-color:#666;background:#111}
@@ -35,26 +35,23 @@
   .au{color:var(--fg)}
   .tx{color:var(--fg)}
 
-  /* admin silme ikonu başlangıçta gizli */
-  .msg-del {
-    display:none;
-    margin-left:6px;
-    cursor:pointer;
-    user-select:none;
-    opacity:.6;
-  }
+  .msg-del { display:none; margin-left:6px; cursor:pointer; opacity:.6; }
   .msg-del:hover{opacity:1}
   html[data-admin="1"] .msg-del{display:inline}
 
   footer{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg)}
   #text{flex:1;background:var(--card);color:var(--fg);border:1px solid var(--btn-bd);
     padding:10px 12px;border-radius:6px;outline:none}
-  #send{background:var(--btn);color:var(--fg);border:1px solid var(--btn-bd);padding:10px 14px;border-radius:6px;cursor:pointer}
+  #send{background:var(--btn);color:var(--fg);border:1px solid var(--btn-bd);
+    padding:10px 14px;border-radius:6px;cursor:pointer}
   #send:active{transform:translateY(1px)}
   .sep{color:var(--line);padding:0 6px}
 
-  /* bll butonu */
-  .bll{padding:4px 10px;border:1px solid var(--btn-bd);background:#111;color:#ddd;border-radius:6px;cursor:pointer;font:12px/1 monospace}
+  /* butonlar */
+  .bll,.tp{padding:4px 10px;border:1px solid var(--btn-bd);background:#111;color:#ddd;
+    border-radius:6px;cursor:pointer;font:12px/1 monospace}
+  #tp-bar{background:var(--card);color:var(--fg);border:1px solid var(--btn-bd);
+    padding:4px 8px;border-radius:6px;font:12px/1 monospace;width:100px}
 </style>
 </head>
 <body>
@@ -73,7 +70,11 @@
         <div class="title">~/ch4t<span class="sep">|</span>channel: <b id="titleChan">#wtf</b></div>
         <div class="meta" id="stats">messages: 0 · nick: 0 · anon: 0</div>
       </div>
-      <button id="btn-bll" class="bll" title="admin tools">bll</button>
+      <div class="right">
+        <input id="tp-bar" placeholder="tp channel…" />
+        <button id="btn-tp" class="tp">tp</button>
+        <button id="btn-bll" class="bll">bll</button>
+      </div>
     </header>
 
     <div id="log"></div>
@@ -81,13 +82,23 @@
     <footer>
       <input id="text" placeholder="type a message in #wtf…" />
       <button id="send">Send</button>
-      <!-- teleport (tp) özelliği -->
-      <button id="tp" title="teleport to bottom">tp</button>
     </footer>
   </section>
 
 </div>
 
 <script src="./app.js"></script>
+<script>
+  document.getElementById("btn-tp").addEventListener("click", ()=>{
+    const name = document.getElementById("tp-bar").value.trim();
+    if(name){
+      // switchChannel fonksiyonu app.js içinde tanımlı
+      switchChannel(name);
+    }
+    // ayrıca en alta kaydır
+    const log = document.getElementById("log");
+    log.scrollTop = log.scrollHeight;
+  });
+</script>
 </body>
 </html>

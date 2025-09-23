@@ -57,16 +57,20 @@ function syncAdminUI(){
 // ===== UI: channels =====
 function renderChannels(){
   $chans.innerHTML = "";
-  const one = el("div","chan active","#wtf");
-  one.addEventListener("click", ()=> switchChannel("wtf"));
-  $chans.appendChild(one);
+  // örnek kanal listesi
+  ["wtf","random","dev"].forEach(name=>{
+    const c = el("div","chan",`#${name}`);
+    if (CH===name) c.classList.add("active");
+    c.addEventListener("click", ()=> switchChannel(name));
+    $chans.appendChild(c);
+  });
 }
+
 function switchChannel(name){
-  if (CH === name) return;
   CH = name;
   $title.textContent = `#${CH}`;
   LIST = []; LAST_TS = 0; $log.innerHTML = "";
-  pull(true);
+  pull(true);   // since=0 ile geçmişi yükler
 }
 
 // ===== Render =====
@@ -104,17 +108,23 @@ async function pull(reset=false){
   try{
     const url = new URL(`${API_BASE}/api/messages`, location.origin);
     url.searchParams.set("ch", CH);
+    // geçmişi görmek için reset’te since=0 gönderiyoruz
     if (!reset && LAST_TS) url.searchParams.set("since", String(LAST_TS));
+    else url.searchParams.set("since","0");  // tüm geçmiş
+
     const res = await fetch(url.toString(), { method:"GET", credentials:"include" });
     if (!res.ok) return;
     const j = await res.json();
     if (!j || !j.ok) return;
+
     if (reset) LIST = j.list || [];
     else LIST = LIST.concat(j.list || []);
+
     LAST_TS = Math.max(LAST_TS, j.lastTs || 0);
     renderList();
-  }catch(e){ /* sessiz */ }
+  }catch(e){ console.error(e); }
 }
+
 
 async function sendMessage(text){
   try{
