@@ -2,6 +2,9 @@
   "name": "ch4t",
   "private": true,
   "type": "module",
+ "scripts": {
+    "test": "node --test"
+  },
   "dependencies": {
     "@upstash/redis": "^1.28.3",
     "bcryptjs": "^2.4.3",

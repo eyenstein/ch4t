@@ -71,11 +71,27 @@ export default async function handler(req, res) {
               [ channel ]
             )).rows;
         await client.end();
-        return ok(res, rows.map(r => ({ id:r.id, author:r.author, text:r.text, ts:Number(r.ts) })));
+          const list = rows.map(r => ({
+                   id: r.id,
+                   channel,
+                   author: r.author,
+                   from: r.author,
+                   text: r.text,
+                   ts: Number(r.ts)
+                 }));
+                 return ok(res, { list });
       } else {
         const st = ensureMem(channel);
-        const list = since ? st.list.filter(m => Number(m.ts) > since) : st.list.slice(-200);
-        return ok(res, list);
+          const raw = since ? st.list.filter(m => Number(m.ts) > since) : st.list.slice(-200);
+                 const list = raw.map(m => ({
+                   id: m.id,
+                   channel: m.channel || channel,
+                   author: m.author,
+                   from: m.from ?? m.author,
+                   text: m.text,
+                   ts: Number(m.ts)
+                 }));
+                 return ok(res, { list });
       }
     } catch {
       return bad(res, 500, "db_error");
@@ -99,7 +115,11 @@ export default async function handler(req, res) {
     try { data = JSON.parse(body||"{}"); } catch { return bad(res, 400, "invalid_json"); }
 
     const text = String(data.text || "").trim();
-    const authorReq = String(data.author || "").trim() || "anon";
+      let authorReq = "anon";
+         for (const candidate of [data.author, data.from]) {
+           const str = String(candidate ?? "").trim();
+           if (str) { authorReq = str; break; }
+         }
     const ch = String(data.channel || channel || "#wtf");
 
     if (!text) return bad(res, 400, "text_required");
@@ -143,8 +163,7 @@ export default async function handler(req, res) {
         await client.end();
       } else {
         const st = ensureMem(ch);
-        st.list.push({ id: row.id, author: row.author, text: row.text, ts: row.ts });
-        st.lastTs = Math.max(st.lastTs, row.ts);
+          st.list.push({ id: row.id, channel: row.channel, author: row.author, from: row.author, text: row.text, ts: row.ts });        st.lastTs = Math.max(st.lastTs, row.ts);
       }
       return ok(res, { id: row.id, ts: row.ts });
     } catch {

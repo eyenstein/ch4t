@@ -14,12 +14,11 @@ export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).json({ error: "method_not_allowed" });
 
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const nick = String(url.searchParams.get("nick") || "").trim().toLowerCase();
+    const nickParam = url.searchParams.get("me") ?? url.searchParams.get("nick") ?? "";
+    const nick = String(nickParam).trim().toLowerCase();
 
   const out = new Set(["#wtf"]);
   try {
-    // Tüm dm kanallarını tarayıp kendi adını içerenleri al
-    // Key formatı: ch4t:chan:dm:<a>|<b>:messages
     let cursor = 0;
     do {
       const resScan = await redis.scan(cursor, {
@@ -42,5 +41,5 @@ export default async function handler(req, res) {
     console.error(e);
   }
 
-  return res.status(200).json(Array.from(out));
+    return res.status(200).json({ channels: Array.from(out) });
 }

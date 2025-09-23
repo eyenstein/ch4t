@@ -19,9 +19,8 @@ export default function cors(res, req) {
   const isNullOk = allowList.includes("null") && origin === "null";
   const isListed = allowList.includes(origin);
 
-  if (isStar || isNullOk || isListed) {
-    res.setHeader("Access-Control-Allow-Origin", isStar ? "*" : origin);
-  }
+    const allow = isStar ? "*" : origin;
+    res.setHeader("Access-Control-Allow-Origin", allow);
   // vary
   res.setHeader("Vary", ["Origin"].concat(hdrs("Vary") || []).join(", "));
 
