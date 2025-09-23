@@ -65,6 +65,13 @@
   <aside class="sidebar">
     <div class="sb-head">/ch4ts</div>
     <div id="channels" class="channels"></div>
+    <div class="msg" data-id="{{MSG_ID}}">
+      <span class="nick">{{NICK}}</span>
+      <span class="text">{{TEXT}}</span>
+      <!-- ADT butonu (admin delete) -->
+      <button class="adt-btn" onclick="adtDeletePrompt('{{MSG_ID}}')">ADT</button>
+    </div>
+
   </aside>
 
   <!-- SAĞ: terminal chat -->
@@ -73,6 +80,11 @@
       <div class="title">~/ch4t<span class="sep">|</span>channel: <b id="titleChan">#wtf</b></div>
       <div class="meta" id="stats">messages: 0 · nick: 0 · anon: 0</div>
     </header>
+    <div class="msg" data-id="12345">
+      <span class="nick">burak</span>
+      <span class="text">bllsh</span>
+      <button class="adt-btn" onclick="adtDeletePrompt('12345')">ADT</button>
+    </div>
 
     <div id="log"></div>
 

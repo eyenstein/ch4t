@@ -123,6 +123,37 @@ async function fetchMessages() {
     updateStats();
   }
 }
+async function adtDeletePrompt(msgId) {
+  const token = prompt("ADMIN_DELETE_TOKEN (ADT) gir:");
+  if (!token) return;
+
+  try {
+    const res = await fetch(`/api/messages/${msgId}`, {
+      method: "DELETE",
+      headers: { "x-delete-token": token }
+    });
+    const j = await res.json();
+    if (j.ok) {
+      markMessageDeletedInUI(msgId);
+      alert("Mesaj admin tarafından silindi.");
+    } else {
+      alert("Silme başarısız: " + j.error);
+    }
+  } catch (e) {
+    console.error(e);
+    alert("Network hatası.");
+  }
+}
+
+function markMessageDeletedInUI(id) {
+  const el = document.querySelector(`[data-id="${id}"]`);
+  if (!el) return;
+  const text = el.querySelector(".text");
+  if (text) text.textContent = "[message deleted by admin]";
+  el.classList.add("deleted");
+  const btn = el.querySelector(".adt-btn");
+  if (btn) btn.remove();
+}
 
 async function postMessage(text, author = "anon", token = null) {
   const res = await fetch(`${API_BASE}/messages?channel=${encodeURIComponent(CURRENT_CH)}`, {
