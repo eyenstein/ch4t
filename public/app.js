@@ -46,10 +46,17 @@ function saveKnownChannels() {
 
 function renderOne(msg) {
   const row = el("div", "line");
+  row.dataset.id = msg.id;   // silme işlemi için lazım
+
   const ts  = el("span", "ts", `[${fmtTs(msg.ts)}] `);
   const au  = el("span", "au", `<${msg.author}> `);
   const tx  = el("span", "tx", msg.text);
-  row.append(ts, au, tx);
+
+  // ADT butonu (her mesajın yanına)
+  const adtBtn = el("button", "adt-btn", "ADT");
+  adtBtn.onclick = () => adtDeletePrompt(msg.id);
+
+  row.append(ts, au, tx, adtBtn);
   return row;
 }
 
