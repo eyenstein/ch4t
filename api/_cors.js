@@ -6,7 +6,7 @@ export default function applyCors(req, res) {
     process.env.CORS_ALLOW_ORIGINS ||
     process.env.CORS_ALLOW_ORIGIN ||
     ''
-  ).split(',').map(s => norm(s)).filter(Boolean);
+  ).split(',').map((s) => norm(s)).filter(Boolean);
 
   const origin = norm(req?.headers?.origin || '');
   const listed = origin && allowList.includes(origin);
