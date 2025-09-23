@@ -1,44 +1,36 @@
-// api/messages.js — Neon varsa DB'den, yoksa RAM'den; kanal ZORUNLU; DELETE prod'da kapalı
+// api/messages.js — #wtf default, Neon varsa DB; yoksa RAM; DELETE prod'da kapalı
 import { Client } from "pg";
 import cors from "./_cors.js";
 import crypto from "crypto";
 
-// --- Config ---
-const hasDB = !!process.env.base_url;             // Neon connection string (postgres)
-const allowDelete = process.env.ALLOW_DELETE === "true"; // Prod'da false bırak
+const DEFAULT_CHANNEL = "#wtf";                 // 🔒 UI bu kanalı kullanıyor
+const hasDB = !!process.env.base_url;
+const allowDelete = process.env.ALLOW_DELETE === "true";
 
 // RAM fallback (kanal -> { list:[], lastTs })
 const mem = { byCh: new Map() };
 
 function now() { return Date.now(); }
-function uid() { return crypto?.randomUUID ? crypto.randomUUID() :
-  (Math.random().toString(36).slice(2) + Date.now().toString(36)); }
+function uid() { return crypto?.randomUUID ? crypto.randomUUID()
+  : (Math.random().toString(36).slice(2) + Date.now().toString(36)); }
 
 function ensureMem(ch) {
   if (!mem.byCh.has(ch)) mem.byCh.set(ch, { list: [], lastTs: 0 });
   return mem.byCh.get(ch);
 }
 
-function pg() {
-  return new Client({ connectionString: process.env.base_url });
-}
-
-function bad(res, code, error)    { res.status(code).json({ ok:false, error }); }
-function ok(res, payload = {})    { res.status(200).json({ ok:true, ...payload }); }
+function pg() { return new Client({ connectionString: process.env.base_url }); }
+function bad(res, code, error) { res.status(code).json({ ok:false, error }); }
+function ok(res, payload = {}) { res.status(200).json({ ok:true, ...payload }); }
 
 export default async function handler(req, res) {
-  // CORS
   cors(req, res);
   if (req.method === "OPTIONS") return res.status(200).end();
 
-  // URL & query
   const url = new URL(req.url, `http://${req.headers.host}`);
+  const channel = String(url.searchParams.get("channel") || DEFAULT_CHANNEL).trim();
 
-  // --- Kanalı ZORUNLU yap: boşsa 400
-  const channelRaw = url.searchParams.get("channel");
-  let channel = (channelRaw || "").trim();
-
-  // POST body okumadan önce, POST'ta body->channel öncelikli
+  // Body (sadece POST)
   let body = "";
   if (req.method === "POST") {
     await new Promise((resolve) => {
@@ -49,10 +41,8 @@ export default async function handler(req, res) {
 
   // --- GET /api/messages?channel=&since=&limit=
   if (req.method === "GET") {
-    if (!channel) return bad(res, 400, "channel_required");
-
     const since = Number(url.searchParams.get("since") || 0);
-    const limit = Math.max(1, Math.min(1000, Number(url.searchParams.get("limit") || 200)));
+    const limit = Math.max(1, Math.min(2000, Number(url.searchParams.get("limit") || 1000)));
 
     if (hasDB) {
       const client = pg();
@@ -85,19 +75,16 @@ export default async function handler(req, res) {
     }
   }
 
-  // --- POST /api/messages  (JSON: {channel, author, text})
+  // --- POST /api/messages  (JSON: {author?, text, channel?})
   if (req.method === "POST") {
     let data = {};
     try { data = JSON.parse(body || "{}"); } catch { return bad(res, 400, "invalid_json"); }
 
-    const ch = String((data.channel || channel || "")).trim();
-    if (!ch) return bad(res, 400, "channel_required");
-
-    const author = String(data.author || "").trim();
+    const ch = String((data.channel || channel || DEFAULT_CHANNEL)).trim();
+    const author = String(data.author || "").trim() || "anon";
     const text   = String(data.text   || "").trim();
 
-    if (!author) return bad(res, 400, "author_required");
-    if (!text)   return bad(res, 400, "text_required");
+    if (!text) return bad(res, 400, "text_required");
 
     const doc = { id: uid(), channel: ch, author, text, ts: now() };
 
@@ -125,11 +112,9 @@ export default async function handler(req, res) {
     }
   }
 
-  // --- DELETE /api/messages?channel=...  (prod'da kapalı)
+  // --- DELETE /api/messages?channel=...
   if (req.method === "DELETE") {
     if (!allowDelete) return bad(res, 403, "delete_disabled");
-
-    if (!channel) return bad(res, 400, "channel_required");
 
     if (hasDB) {
       const client = pg();
