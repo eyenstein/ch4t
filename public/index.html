@@ -5,86 +5,67 @@
 <meta name="viewport"
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>ch4t · #wtf</title>
-<link rel="stylesheet" href="./style.css"><!-- varsa kendi css'in dursun -->
+<link rel="stylesheet" href="./style.css">
 <style>
-  /* Monokrom terminal tema */
   :root {
-    --bg:#000;        /* zemin */
-    --fg:#e6e6e6;     /* metin */
-    --mut:#9a9a9a;    /* ikincil metin */
-    --line:#222;      /* çizgi/kenar */
-    --card:#0a0a0a;   /* panel arka plan */
-    --btn:#111;       /* buton zemin */
-    --btn-bd:#333;    /* buton kenar */
+    --bg:#000; --fg:#e6e6e6; --mut:#9a9a9a; --line:#222; --card:#0a0a0a;
+    --btn:#111; --btn-bd:#333;
   }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
-  .layout { display:flex; height:100vh; }
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;}
+  .layout{display:flex;height:100vh}
 
-  /* Sol panel (kanallar) */
-  .sidebar { width:220px; border-right:1px solid var(--line); background:var(--bg); display:flex; flex-direction:column; }
-  .sb-head { padding:10px 12px; color:var(--mut); border-bottom:1px solid var(--line); letter-spacing:.3px; }
-  .channels { flex:1; overflow:auto; padding:8px 6px; }
-  .chan {
-    padding:8px 10px; margin:4px 6px; border:1px solid var(--line); border-radius:6px;
-    cursor:pointer; color:var(--fg); background:var(--card);
-  }
-  .chan.active { border-color:#666; background:#111; }
+  /* Sol panel */
+  .sidebar{width:220px;border-right:1px solid var(--line);background:var(--bg);display:flex;flex-direction:column}
+  .sb-head{padding:10px 12px;color:var(--mut);border-bottom:1px solid var(--line);letter-spacing:.3px}
+  .channels{flex:1;overflow:auto;padding:8px 6px}
+  .chan{padding:8px 10px;margin:4px 6px;border:1px solid var(--line);border-radius:6px;cursor:pointer;color:var(--fg);background:var(--card)}
+  .chan.active{border-color:#666;background:#111}
 
   /* Sağ panel */
-  .main { flex:1; display:flex; flex-direction:column; }
-  header { padding:8px 12px; border-bottom:1px solid var(--line); background:var(--bg); position:sticky; top:0; }
-  header .title { color:var(--fg); }
-  header .meta  { color:var(--mut); opacity:.95; font-size:12px; margin-top:2px; }
-  #log { flex:1; overflow:auto; padding:10px 12px; background:var(--bg); }
+  .main{flex:1;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:12px;justify-content:space-between;
+    padding:8px 12px;border-bottom:1px solid var(--line);background:var(--bg);position:sticky;top:0}
+  header .left{display:flex;flex-direction:column}
+  .title{color:var(--fg)}
+  .meta{color:var(--mut);opacity:.95;font-size:12px;margin-top:2px}
+  #log{flex:1;overflow:auto;padding:10px 12px;background:var(--bg)}
+  .line{white-space:pre-wrap;word-break:break-word;padding:2px 0;display:flex;align-items:center;gap:4px}
+  .ts{color:var(--mut)}
+  .au{color:var(--fg)}
+  .tx{color:var(--fg)}
+  .msg-del{margin-left:6px;cursor:pointer;user-select:none;opacity:.6}
+  .msg-del:hover{opacity:1}
 
-  .line { white-space:pre-wrap; word-break:break-word; padding:2px 0; }
-  .ts   { color:var(--mut); }                         /* [2025-09-23 11:11:11] */
-  .au   { color:var(--fg); }                          /* <anon> */
-  .tx   { color:var(--fg); }                          /* mesaj */
+  footer{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg)}
+  #text{flex:1;background:var(--card);color:var(--fg);border:1px solid var(--btn-bd);
+    padding:10px 12px;border-radius:6px;outline:none}
+  #send{background:var(--btn);color:var(--fg);border:1px solid var(--btn-bd);padding:10px 14px;border-radius:6px;cursor:pointer}
+  #send:active{transform:translateY(1px)}
+  .sep{color:var(--line);padding:0 6px}
 
-  footer { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line); background:var(--bg); }
-  #text {
-    flex:1; background:var(--card); color:var(--fg); border:1px solid var(--btn-bd);
-    padding:10px 12px; border-radius:6px; outline:none;
-  }
-  #send {
-    background:var(--btn); color:var(--fg); border:1px solid var(--btn-bd);
-    padding:10px 14px; border-radius:6px; cursor:pointer;
-  }
-  #send:active { transform:translateY(1px); }
-
-  /* küçük ikon/başlık ayracı */
-  .sep { color:var(--line); padding:0 6px; }
+  /* bll butonu */
+  .bll{padding:4px 10px;border:1px solid var(--btn-bd);background:#111;color:#ddd;border-radius:6px;cursor:pointer;font:12px/1 monospace}
 </style>
 </head>
 <body>
 <div class="layout">
 
-  <!-- SOL: kanallar (tek kanal istiyorsan listede sadece #wtf kalsın) -->
+  <!-- SOL: kanallar -->
   <aside class="sidebar">
     <div class="sb-head">/ch4ts</div>
     <div id="channels" class="channels"></div>
-    <div class="msg" data-id="{{MSG_ID}}">
-      <span class="nick">{{NICK}}</span>
-      <span class="text">{{TEXT}}</span>
-      <!-- ADT butonu (admin delete) -->
-      <button class="adt-btn" onclick="adtDeletePrompt('{{MSG_ID}}')">ADT</button>
-    </div>
-
   </aside>
 
-  <!-- SAĞ: terminal chat -->
+  <!-- SAĞ: chat -->
   <section class="main">
     <header>
-      <div class="title">~/ch4t<span class="sep">|</span>channel: <b id="titleChan">#wtf</b></div>
-      <div class="meta" id="stats">messages: 0 · nick: 0 · anon: 0</div>
+      <div class="left">
+        <div class="title">~/ch4t<span class="sep">|</span>channel: <b id="titleChan">#wtf</b></div>
+        <div class="meta" id="stats">messages: 0 · nick: 0 · anon: 0</div>
+      </div>
+      <button id="btn-bll" class="bll" title="admin tools">bll</button>
     </header>
-    <div class="msg" data-id="12345">
-      <span class="nick">No 10</span>
-      <span class="text">bllsh</span>
-      <button class="adt-btn" onclick="adtDeletePrompt('12345')">ADT</button>
-    </div>
 
     <div id="log"></div>
 
