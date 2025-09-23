@@ -1,4 +1,4 @@
-// api/_cors.js — minimal, crash-safe, credentials ON, wildcard OFF
+// api/_cors.js — credentials ON, wildcard OFF
 function norm(u){ return (u || '').trim().replace(/\/+$/, ''); }
 
 export default function applyCors(req, res) {
@@ -11,7 +11,6 @@ export default function applyCors(req, res) {
   const origin = norm(req?.headers?.origin || '');
   const listed = origin && allowList.includes(origin);
 
-  // Vary: Origin (basit; önceki header'ı okumaya çalışma)
   try { res.setHeader('Vary', 'Origin'); } catch {}
 
   if (listed) {

@@ -2,7 +2,7 @@
 import { Redis } from "@upstash/redis";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-import cors from "./_cors.js"; // senin mevcut CORS helper'ın
+import cors from "./_cors.js"; 
 
 // ---- env guard
 const REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL || "";
