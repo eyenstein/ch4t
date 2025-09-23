@@ -44,7 +44,6 @@
     opacity:.6;
   }
   .msg-del:hover{opacity:1}
-  /* admin token aktifken görünür */
   html[data-admin="1"] .msg-del{display:inline}
 
   footer{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg)}
@@ -82,6 +81,8 @@
     <footer>
       <input id="text" placeholder="type a message in #wtf…" />
       <button id="send">Send</button>
+      <!-- teleport (tp) özelliği -->
+      <button id="tp" title="teleport to bottom">tp</button>
     </footer>
   </section>
 
