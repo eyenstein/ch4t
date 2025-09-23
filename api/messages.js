@@ -1,206 +1,159 @@
 // api/messages.js
 import { Client } from "pg";
-import jwt from "jsonwebtoken";
-import applyCors from "./_cors.js";
+import cors from "./_cors.js"; // Senin CORS helper'ın (Origin allow-list okuyor)
+import crypto from "crypto";
 
-const hasDB = !!process.env.base_url;
-// Prod loglarında görmek için (parolayı yazmıyoruz)
-console.log("messages: hasDB?", hasDB, "base_url:", process.env.base_url ? "<set>" : "<missing>");
+// --- Config ---
+const hasDB = !!process.env.base_url; // Neon connection string
+const mem = { byCh: new Map() };      // Fallback RAM (channel -> { list:[], lastTs })
 
 function now() { return Date.now(); }
-function id()  { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
+function uid() {
+  if (crypto?.randomUUID) return crypto.randomUUID();
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
 
-const mem = { byCh: new Map() }; // channel -> { list:[], lastTs }
 function ensureMem(ch) {
   if (!mem.byCh.has(ch)) mem.byCh.set(ch, { list: [], lastTs: 0 });
   return mem.byCh.get(ch);
 }
 
 function pg() {
-  return new Client({ connectionString: process.env.base_url });
+  const client = new Client({ connectionString: process.env.base_url });
+  return client;
 }
 
 function bad(res, code, error) {
-  res.status(code).json({ ok:false, error });
+  res.status(code).json({ ok: false, error });
 }
 function ok(res, payload) {
-  res.status(200).json(payload);
-}
-
-function isDM(ch) {
-  return String(ch || "").startsWith("dm:");
-}
-function sameNick(a, b) {
-  return String(a||"").trim().toLowerCase() === String(b||"").trim().toLowerCase();
-}
-function parseBearer(req) {
-  const auth = String(req.headers.authorization || "");
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] : "";
-}
-function verifyJWT(token) {
-  const secret = process.env.JWT_SECRET || "";
-  if (!secret) return null;
-  try { return jwt.verify(token, secret); } catch { return null; }
+  res.status(200).json({ ok: true, ...payload });
 }
 
 export default async function handler(req, res) {
-  // --- CORS (preflight) ---
-  if (req.method === "OPTIONS") {
-    applyCors(req, res);
-    return res.status(200).end();
-  }
-  applyCors(req, res);
+  // CORS
+  cors(req, res);
+  if (req.method === "OPTIONS") return res.status(200).end();
 
+  // URL & query
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const channel = String(url.searchParams.get("channel") || "#wtf");
-  const since   = Number(url.searchParams.get("since") || 0);
+  const channel = (url.searchParams.get("channel") || "global").trim();
+  const since = Number(url.searchParams.get("since") || 0);
+  const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") || 100)));
 
-  // ===== GET: list messages (kanal bazlı) =====
+  // --- GET /api/messages?channel=&since=&limit=
   if (req.method === "GET") {
-    try {
-      if (hasDB) {
-        const client = pg();
+    if (hasDB) {
+      const client = pg();
+      try {
         await client.connect();
-        const rows = since
-          ? (await client.query(
-              "SELECT id, author, text, ts FROM messages WHERE channel = $1 AND ts > $2 ORDER BY ts ASC",
-              [ channel, since ]
-            )).rows
-          : (await client.query(
-              "SELECT id, author, text, ts FROM messages WHERE channel = $1 ORDER BY ts ASC LIMIT 200",
-              [ channel ]
-            )).rows;
-        await client.end();
-
-        const list = rows.map(r => ({
-          id: r.id,
-          channel,
-          author: r.author,
-          from: r.author,
-          text: r.text,
-          ts: Number(r.ts)
-        }));
-        return ok(res, { list });
-      } else {
-        const st = ensureMem(channel);
-        const raw = since ? st.list.filter(m => Number(m.ts) > since) : st.list.slice(-200);
-        const list = raw.map(m => ({
-          id: m.id,
-          channel: m.channel || channel,
-          author: m.author,
-          from: m.from ?? m.author,
-          text: m.text,
-          ts: Number(m.ts)
-        }));
-        return ok(res, { list });
-      }
-    } catch (e) {
-      console.error("GET messages db_error:", e?.message || e);
-      return bad(res, 500, "db_error");
-    }
-  }
-
-  // ===== POST: create message =====
-  if (req.method === "POST") {
-    let body = "";
-    try {
-      await new Promise((resolve, reject)=>{
-        req.on("data", c => { body += c; });
-        req.on("end", resolve);
-        req.on("error", reject);
-      });
-    } catch {
-      return bad(res, 400, "invalid_body");
-    }
-
-    let data = {};
-    try { data = JSON.parse(body||"{}"); } catch { return bad(res, 400, "invalid_json"); }
-
-    const text = String(data.text || "").trim();
-    let authorReq = "anon";
-    for (const candidate of [data.author, data.from]) {
-      const str = String(candidate ?? "").trim();
-      if (str) { authorReq = str; break; }
-    }
-    const ch = String(data.channel || channel || "#wtf");
-
-    if (!text) return bad(res, 400, "text_required");
-
-    const allowAnonPublic = (process.env.ALLOW_ANON_PUBLIC || "true").toLowerCase() !== "false";
-
-    // auth
-    const token = parseBearer(req);
-    const decoded = token ? verifyJWT(token) : null;
-    const tokenNick = decoded?.nick ? String(decoded.nick).trim() : "";
-
-    // Kurallar:
-    // - DM'de: token şart ve token.nick == authorReq
-    // - Public'te:
-    //    - author=anon ise token zorunlu değil (konfig ile kapatılabilir)
-    //    - author!=anon ise token şart ve token.nick == authorReq
-    if (isDM(ch)) {
-      if (!tokenNick || !sameNick(tokenNick, authorReq)) {
-        return bad(res, 401, "unauthorized");
+        // Kanal + since + limit ile çek
+        const { rows } = await client.query(
+          `
+          SELECT id, channel, author, text, ts
+          FROM messages
+          WHERE ($1::text IS NULL OR channel = $1)
+            AND ($2::bigint IS NULL OR ts > $2)
+          ORDER BY ts ASC
+          LIMIT $3
+        `,
+          [channel, since || null, limit]
+        );
+        const list = rows;
+        const lastTs = list.length ? list[list.length - 1].ts : since;
+        return ok(res, { list, lastTs });
+      } catch (e) {
+        console.error("GET /messages DB error:", e);
+        return bad(res, 500, "db_read_failed");
+      } finally {
+        try { await client.end(); } catch {}
       }
     } else {
-      if (authorReq.toLowerCase() !== "anon") {
-        if (!tokenNick || !sameNick(tokenNick, authorReq)) {
-          return bad(res, 401, "unauthorized");
-        }
-      } else if (!allowAnonPublic) {
-        return bad(res, 401, "anon_disabled");
-      }
-    }
-
-    const row = { id: id(), channel: ch, author: authorReq, text, ts: now() };
-
-    try {
-      if (hasDB) {
-        const client = pg();
-        await client.connect();
-        await client.query(
-          "INSERT INTO messages (id, channel, author, text, ts) VALUES ($1,$2,$3,$4,$5)",
-          [ row.id, row.channel, row.author, row.text, row.ts ]
-        );
-        await client.end();
-      } else {
-        const st = ensureMem(ch);
-        st.list.push({ id: row.id, channel: row.channel, author: row.author, from: row.author, text: row.text, ts: row.ts });
-        st.lastTs = Math.max(st.lastTs, row.ts);
-      }
-      return ok(res, { id: row.id, ts: row.ts });
-    } catch (e) {
-      console.error("POST messages db_error:", e?.message || e);
-      return bad(res, 500, "db_error");
+      // RAM fallback
+      const box = ensureMem(channel);
+      const list = box.list.filter(m => m.ts > since).slice(0, limit);
+      const lastTs = list.length ? list[list.length - 1].ts : since;
+      return ok(res, { list, lastTs });
     }
   }
 
-  // ===== DELETE: admin delete =====
-  if (req.method === "DELETE") {
-    const admin = process.env.ADMIN_TOKEN || process.env.EDIT_TOKEN || "";
-    const token = parseBearer(req);
-    if (!admin || token !== admin) return bad(res, 401, "unauthorized");
+  // --- POST /api/messages  (JSON: {channel?, author, text})
+  if (req.method === "POST") {
+    // Body oku
+    let body = "";
+    await new Promise((resolve) => {
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", resolve);
+    });
 
-    const idQ = String(new URL(req.url, `http://${req.headers.host}`).searchParams.get("id") || "");
-    if (!idQ) return bad(res, 400, "id_required");
-
+    let data;
     try {
-      if (hasDB) {
-        const client = pg();
+      data = JSON.parse(body || "{}");
+    } catch {
+      return bad(res, 400, "invalid_json");
+    }
+
+    const ch = (data.channel || channel || "global").trim();
+    const author = String(data.author || "").trim();
+    const text = String(data.text || "").trim();
+
+    if (!author) return bad(res, 400, "author_required");
+    if (!text) return bad(res, 400, "text_required");
+
+    const doc = {
+      id: uid(),
+      channel: ch,
+      author,
+      text,
+      ts: now(),
+    };
+
+    if (hasDB) {
+      const client = pg();
+      try {
         await client.connect();
-        await client.query("DELETE FROM messages WHERE id=$1", [ idQ ]);
-        await client.end();
-      } else {
-        for (const st of mem.byCh.values()) {
-          const i = st.list.findIndex(m => m.id === idQ);
-          if (i !== -1) st.list.splice(i,1);
-        }
+        await client.query(
+          `
+          INSERT INTO messages (id, channel, author, text, ts)
+          VALUES ($1, $2, $3, $4, $5)
+        `,
+          [doc.id, doc.channel, doc.author, doc.text, doc.ts]
+        );
+        return ok(res, { message: doc });
+      } catch (e) {
+        console.error("POST /messages DB error:", e);
+        return bad(res, 500, "db_write_failed");
+      } finally {
+        try { await client.end(); } catch {}
       }
-      return ok(res, { ok:true, id: idQ });
-    } catch (e) {
-      console.error("DELETE messages db_error:", e?.message || e);
-      return bad(res, 500, "db_error");
+    } else {
+      // RAM fallback
+      const box = ensureMem(ch);
+      box.list.push(doc);
+      box.lastTs = doc.ts;
+      return ok(res, { message: doc });
+    }
+  }
+
+  // --- DELETE (opsiyonel: kanal temizleme)
+  if (req.method === "DELETE") {
+    if (!hasDB) {
+      const box = ensureMem(channel);
+      box.list = [];
+      box.lastTs = 0;
+      return ok(res, { cleared: true });
+    } else {
+      const client = pg();
+      try {
+        await client.connect();
+        await client.query(`DELETE FROM messages WHERE channel = $1`, [channel]);
+        return ok(res, { cleared: true });
+      } catch (e) {
+        console.error("DELETE /messages DB error:", e);
+        return bad(res, 500, "db_delete_failed");
+      } finally {
+        try { await client.end(); } catch {}
+      }
     }
   }
 
