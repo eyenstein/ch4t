@@ -1,23 +1,23 @@
-
-
+// api/messages.js
 import { Client } from "pg";
 import jwt from "jsonwebtoken";
-import cors from "./_cors.js";
+import applyCors from "./_cors.js";
 
 const hasDB = !!process.env.base_url;
-const mem = { byCh: new Map() }; // channel -> { list:[], lastTs }
+// Prod loglarında görmek için (parolayı yazmıyoruz)
+console.log("messages: hasDB?", hasDB, "base_url:", process.env.base_url ? "<set>" : "<missing>");
 
 function now() { return Date.now(); }
 function id()  { return Math.random().toString(36).slice(2) + Date.now().toString(36); }
 
+const mem = { byCh: new Map() }; // channel -> { list:[], lastTs }
 function ensureMem(ch) {
   if (!mem.byCh.has(ch)) mem.byCh.set(ch, { list: [], lastTs: 0 });
   return mem.byCh.get(ch);
 }
 
 function pg() {
-  const client = new Client({ connectionString: process.env.base_url });
-  return client;
+  return new Client({ connectionString: process.env.base_url });
 }
 
 function bad(res, code, error) {
@@ -30,17 +30,14 @@ function ok(res, payload) {
 function isDM(ch) {
   return String(ch || "").startsWith("dm:");
 }
-
 function sameNick(a, b) {
   return String(a||"").trim().toLowerCase() === String(b||"").trim().toLowerCase();
 }
-
 function parseBearer(req) {
   const auth = String(req.headers.authorization || "");
   const m = auth.match(/^Bearer\s+(.+)$/i);
   return m ? m[1] : "";
 }
-
 function verifyJWT(token) {
   const secret = process.env.JWT_SECRET || "";
   if (!secret) return null;
@@ -48,8 +45,12 @@ function verifyJWT(token) {
 }
 
 export default async function handler(req, res) {
-  cors(res, req);
-  if (req.method === "OPTIONS") return res.status(200).end();
+  // --- CORS (preflight) ---
+  if (req.method === "OPTIONS") {
+    applyCors(req, res);
+    return res.status(200).end();
+  }
+  applyCors(req, res);
 
   const url = new URL(req.url, `http://${req.headers.host}`);
   const channel = String(url.searchParams.get("channel") || "#wtf");
@@ -71,29 +72,31 @@ export default async function handler(req, res) {
               [ channel ]
             )).rows;
         await client.end();
-          const list = rows.map(r => ({
-                   id: r.id,
-                   channel,
-                   author: r.author,
-                   from: r.author,
-                   text: r.text,
-                   ts: Number(r.ts)
-                 }));
-                 return ok(res, { list });
+
+        const list = rows.map(r => ({
+          id: r.id,
+          channel,
+          author: r.author,
+          from: r.author,
+          text: r.text,
+          ts: Number(r.ts)
+        }));
+        return ok(res, { list });
       } else {
         const st = ensureMem(channel);
-          const raw = since ? st.list.filter(m => Number(m.ts) > since) : st.list.slice(-200);
-                 const list = raw.map(m => ({
-                   id: m.id,
-                   channel: m.channel || channel,
-                   author: m.author,
-                   from: m.from ?? m.author,
-                   text: m.text,
-                   ts: Number(m.ts)
-                 }));
-                 return ok(res, { list });
+        const raw = since ? st.list.filter(m => Number(m.ts) > since) : st.list.slice(-200);
+        const list = raw.map(m => ({
+          id: m.id,
+          channel: m.channel || channel,
+          author: m.author,
+          from: m.from ?? m.author,
+          text: m.text,
+          ts: Number(m.ts)
+        }));
+        return ok(res, { list });
       }
-    } catch {
+    } catch (e) {
+      console.error("GET messages db_error:", e?.message || e);
       return bad(res, 500, "db_error");
     }
   }
@@ -115,11 +118,11 @@ export default async function handler(req, res) {
     try { data = JSON.parse(body||"{}"); } catch { return bad(res, 400, "invalid_json"); }
 
     const text = String(data.text || "").trim();
-      let authorReq = "anon";
-         for (const candidate of [data.author, data.from]) {
-           const str = String(candidate ?? "").trim();
-           if (str) { authorReq = str; break; }
-         }
+    let authorReq = "anon";
+    for (const candidate of [data.author, data.from]) {
+      const str = String(candidate ?? "").trim();
+      if (str) { authorReq = str; break; }
+    }
     const ch = String(data.channel || channel || "#wtf");
 
     if (!text) return bad(res, 400, "text_required");
@@ -163,10 +166,12 @@ export default async function handler(req, res) {
         await client.end();
       } else {
         const st = ensureMem(ch);
-          st.list.push({ id: row.id, channel: row.channel, author: row.author, from: row.author, text: row.text, ts: row.ts });        st.lastTs = Math.max(st.lastTs, row.ts);
+        st.list.push({ id: row.id, channel: row.channel, author: row.author, from: row.author, text: row.text, ts: row.ts });
+        st.lastTs = Math.max(st.lastTs, row.ts);
       }
       return ok(res, { id: row.id, ts: row.ts });
-    } catch {
+    } catch (e) {
+      console.error("POST messages db_error:", e?.message || e);
       return bad(res, 500, "db_error");
     }
   }
@@ -193,7 +198,8 @@ export default async function handler(req, res) {
         }
       }
       return ok(res, { ok:true, id: idQ });
-    } catch {
+    } catch (e) {
+      console.error("DELETE messages db_error:", e?.message || e);
       return bad(res, 500, "db_error");
     }
   }
