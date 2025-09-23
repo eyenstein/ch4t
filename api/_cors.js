@@ -1,26 +1,34 @@
-// api/_cors.js — credentials ON, wildcard OFF
-function norm(u){ return (u || '').trim().replace(/\/+$/, ''); }
+export default function applyCORS(req, res) {
+  const origin = req.headers.origin || "";
+  const list = (process.env.CORS_ALLOW_ORIGINS || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
 
-export default function applyCors(req, res) {
-  const allowList = String(
-    process.env.CORS_ALLOW_ORIGINS ||
-    process.env.CORS_ALLOW_ORIGIN ||
-    ''
-  ).split(',').map((s) => norm(s)).filter(Boolean);
+  const allowed =
+    list.includes("*") ||
+    (origin && list.includes(origin)) ||
+    (!origin && list.includes("null"));
 
-  const origin = norm(req?.headers?.origin || '');
-  const listed = origin && allowList.includes(origin);
-
-  try { res.setHeader('Vary', 'Origin'); } catch {}
-
-  if (listed) {
-    try {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-    } catch {}
+  if (allowed && origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
   }
-  try {
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
-  } catch {}
+
+  // Bu ikisi buradan geliyor 👇
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    req.headers["access-control-request-headers"] || "Content-Type,Authorization"
+  );
+
+  if (process.env.CORS_ALLOW_CREDENTIALS === "true") {
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+
+  if (req.method === "OPTIONS") {
+    res.status(204).end();
+    return true;
+  }
+  return false;
 }
