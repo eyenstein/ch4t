@@ -62,13 +62,25 @@ function renderList() {
 
 function updateStats() {
   const total = LIST.length;
-  let nickCnt = 0, anonCnt = 0;
+
+  const seenNicks = new Set();
+  let hasAnon = false;
+
   for (const m of LIST) {
-    if (!m.author || m.author === "anon") anonCnt++;
-    else nickCnt++;
+    const a = String(m.author || "anon").trim();
+    if (!a || a === "anon") hasAnon = true;
+    else seenNicks.add(a);
   }
-  $stats.textContent = `messages: ${total} · nick: ${nickCnt} · anon: ${anonCnt}`;
+
+  const nickUsers = seenNicks.size;
+  const anonUsers = hasAnon ? 1 : 0;
+
+  // istersen toplam kullanıcıyı da göster
+  // const totalUsers = nickUsers + anonUsers;
+
+  $stats.textContent = `messages: ${total} · nick: ${nickUsers} · anon: ${anonUsers}`;
 }
+
 
 function setChannel(ch) {
   // kanal ismini güvene al (#, harf/rakam ve basit ayırıcılar)
