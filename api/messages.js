@@ -1,13 +1,14 @@
-// api/messages.js — #wtf default, Neon varsa DB; yoksa RAM; DELETE prod'da kapalı
+// /api/messages.js
 import { Client } from "pg";
 import cors from "./_cors.js";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 
-const DEFAULT_CHANNEL = "#wtf";              // 🔒 varsayılan kanal
+const DEFAULT_CHANNEL = "#wtf";
 const hasDB = !!process.env.base_url;
 const allowDelete = process.env.ALLOW_DELETE === "true";
 
-const mem = { byCh: new Map() };            // RAM fallback
+const mem = { byCh: new Map() };
 
 function now()  { return Date.now(); }
 function uid()  {
@@ -23,12 +24,31 @@ function pg()   { return new Client({ connectionString: process.env.base_url });
 function bad(res, code, error) { res.status(code).json({ ok: false, error }); }
 function ok(res, payload = {}) { res.status(200).json({ ok: true, ...payload }); }
 
+function getToken(req) {
+  const auth = req.headers.authorization || "";
+  if (auth.startsWith("Bearer ")) return auth.slice(7);
+  const cookie = req.headers.cookie || "";
+  const m = cookie.match(/(?:^|;\s*)ch4t_token=([^;]+)/);
+  return m ? m[1] : null;
+}
+
 export default async function handler(req, res) {
   cors(req, res);
   if (req.method === "OPTIONS") return res.status(200).end();
 
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const channel = String(url.searchParams.get("channel") || DEFAULT_CHANNEL).trim();
+  // hem "ch" hem "channel" destekle
+  const channel = String(url.searchParams.get("ch") || url.searchParams.get("channel") || DEFAULT_CHANNEL).trim();
+
+  // ——— auth'dan author çıkar
+  let authorFromToken = "anon";
+  const token = getToken(req);
+  if (token) {
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET || "dev");
+      authorFromToken = payload.sub || "anon";
+    } catch { /* geçersiz token */ }
+  }
 
   // Body (sadece POST)
   let body = "";
@@ -49,17 +69,13 @@ export default async function handler(req, res) {
       try {
         await client.connect();
         const { rows } = await client.query(
-          `
-          SELECT id, channel, author, text, ts
-          FROM messages
-          WHERE channel = $1 AND ($2::bigint IS NULL OR ts > $2)
-          ORDER BY ts ASC
-          LIMIT $3
-          `,
+          `SELECT id, channel, author, text, ts
+           FROM messages
+           WHERE channel = $1 AND ($2::bigint IS NULL OR ts > $2)
+           ORDER BY ts ASC
+           LIMIT $3`,
           [channel, since || null, limit]
         );
-
-        // 🔧 pg BIGINT -> string döndürebilir; Number'a çevir
         const list = rows.map(r => ({ ...r, ts: Number(r.ts) }));
         const lastTs = list.length ? list[list.length - 1].ts : since;
         return ok(res, { list, lastTs: Number(lastTs) });
@@ -86,12 +102,12 @@ export default async function handler(req, res) {
       return bad(res, 400, "invalid_json");
     }
 
-    const ch     = String((data.channel || channel || DEFAULT_CHANNEL)).trim();
-    const author = String(data.author || "").trim() || "anon";
-    const text   = String(data.text   || "").trim();
+      const ch   = String((data.channel || channel || DEFAULT_CHANNEL)).trim();    const text = String(data.text || "").trim();
+
     if (!text) return bad(res, 400, "text_required");
 
-    const doc = { id: uid(), channel: ch, author, text, ts: now() };
+    // **author'ı sadece token'dan al** (gönderilen "author" yok sayılır)
+    const doc = { id: uid(), channel: ch, author: authorFromToken, text, ts: now() };
 
     if (hasDB) {
       const client = pg();
@@ -143,4 +159,3 @@ export default async function handler(req, res) {
 
   return bad(res, 405, "method_not_allowed");
 }
-

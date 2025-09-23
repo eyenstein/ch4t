@@ -1,37 +1,26 @@
-// /api/_cors.js
+// _cors.js
+const ALLOW = (process.env.CORS_ALLOW_ORIGINS || "").split(",");
+// ör: "https://burak.wtf,https://www.burak.wtf,null,http://localhost:8000"
+
 export default function applyCORS(req, res) {
-  const origin = req.headers.origin || "";
-  const list = (process.env.CORS_ALLOW_ORIGINS || "")
-    .split(",")
-    .map(s => s.trim())
-    .filter(Boolean);
+  const origin = req.headers.origin || "null";
+  if (req.method === "OPTIONS") {
+    if (ALLOW.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+      res.status(204).end();
+      return true;
+    }
+    res.status(404).end(); return true;
+  }
 
-  const allowed =
-    list.includes("*") ||
-    (origin && list.includes(origin)) ||
-    (!origin && list.includes("null"));
-
-  if (allowed && origin) {
-    // credentials kullanılacağı için wildcard YOK; gelen origin'i aynen yansıt.
+  if (ALLOW.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
-  }
-
-  // Bunlar env’den değil, koddandır:
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    req.headers["access-control-request-headers"] || "Content-Type,Authorization"
-  );
-
-  if (process.env.CORS_ALLOW_CREDENTIALS === "true") {
     res.setHeader("Access-Control-Allow-Credentials", "true");
-  }
-
-  // Preflight ise burada bitir
-  if (req.method === "OPTIONS") {
-    res.status(204).end();
-    return true;
   }
   return false;
 }
