@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import jwt from 'jsonwebtoken';
 import { Client } from 'pg';
+import applyCors from './_cors.js';
 
 function createReq({ method, url, headers = {}, body }) {
   const stream = body !== undefined ? Readable.from([body]) : Readable.from([]);

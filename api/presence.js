@@ -1,6 +1,7 @@
 export const config = { runtime: "nodejs" };
 
 import { Redis } from "@upstash/redis";
+import applyCors from './_cors.js';
 const redis = Redis.fromEnv();
 
 const H_NICKS = "ch4t:presence:nicks";

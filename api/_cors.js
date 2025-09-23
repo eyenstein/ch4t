@@ -1,31 +1,29 @@
+// api/_cors.js  — CORS (credentials ON, wildcard OFF)
+function norm(u){ return (u || '').trim().replace(/\/+$/, ''); }
 
-export default function cors(res, req) {
-  const hdrs = res.getHeader ? (k)=>res.getHeader(k) : ()=>undefined;
-
-  const allowListRaw =
+export default function applyCors(req, res) {
+  // Env: "https://burak.wtf,https://www.burak.wtf,https://ch4t.burak.wtf"
+  const allowList = String(
     process.env.CORS_ALLOW_ORIGINS ||
     process.env.CORS_ALLOW_ORIGIN ||
-    ""; 
+    ''
+  ).split(',').map(s => norm(s)).filter(Boolean);
 
-  const allowList = String(allowListRaw)
-    .split(",")
-    .map(s => s.trim())
-    .filter(Boolean);
+  const origin = norm(req?.headers?.origin || '');
+  const listed = origin && allowList.includes(origin); // sadece tam eşleşme
 
-  const origin = req?.headers?.origin || "";
+  // Vary: Origin (cache doğruluğu)
+  const prevVary = res.getHeader && res.getHeader('Vary');
+  const vary = new Set(String(prevVary || '').split(',').map(s => s.trim()).filter(Boolean));
+  vary.add('Origin');
+  res.setHeader('Vary', Array.from(vary).join(', '));
 
-  // eşleşirse origin'i döndür; '*' varsa hepsine izin
-  const isStar = allowList.includes("*");
-  const isNullOk = allowList.includes("null") && origin === "null";
-  const isListed = allowList.includes(origin);
-
-    const allow = isStar ? "*" : origin;
-    res.setHeader("Access-Control-Allow-Origin", allow);
-  // vary
-  res.setHeader("Vary", ["Origin"].concat(hdrs("Vary") || []).join(", "));
-
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
-  // gerekirse credential
-  res.setHeader("Access-Control-Allow-Credentials", "true");
+  // Credentials açıkken wildcard YASAK — sadece listed origin'e izin ver
+  if (listed) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true'); // <— credentials ON
+  }
+  // Her halükârda izin verilen method/header listesi:
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
 }
