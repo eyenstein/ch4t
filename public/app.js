@@ -1,7 +1,7 @@
 // ===== Config =====
 const API_BASE = "";                 // aynı origin
 const DEFAULT_CHAN = "wtf";
-
+const ALL_CH = "__ALL__";
 // ===== State =====
 let CURRENT = getCurrentUser();      // { nick?, pass? }
 let currentCh = DEFAULT_CHAN;
@@ -128,6 +128,7 @@ async function loadHistory(ch, since=0, limit=1000){
   if (j.lastTs) lastTs = Math.max(lastTs, j.lastTs);
   renderList();
 }
+function normChan(s){ return String(s||"").trim().replace(/^#+/, "").toLowerCase(); }
 
 function stopLive(){
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
@@ -209,19 +210,27 @@ async function deleteMessage(id){
 
 // ===== Channels UI =====
 async function renderChannels(){
-  const list = await fetchChannels(); // [{channel, count, first_ts, last_ts}, ...]
+  const list = await fetchChannels(); // [{channel,count,...}]
   $chans.innerHTML = "";
 
-  // Sadece admin token varken All göster
+  // Admin token varsa "All"
   if (isAdminMode()){
     const all = el("div","chan",`#All`);
-    if (currentCh==="__ALL__") all.classList.add("active");
-    all.addEventListener("click", ()=> switchChannel("__ALL__"));
+      if (currentCh===ALL_CH) all.classList.add("active");
+      all.addEventListener("click", ()=> switchChannel(ALL_CH));
     $chans.appendChild(all);
   }
 
-  for (const row of list){
-    const name = row.channel;  // DB’de ne yazıyorsa
+  
+    
+  // PUBLIC: sadece wtf göster
+  const visible = isAdminMode()
+    ? list                         // admin her şeyi görsün
+    : list.filter(r => r.channel === "wtf");  // sadece wtf
+
+
+  for (const row of visible){
+    const name = row.channel;  // normalize ad (ör: "wtf")
     const c = el("div","chan", `#${name} (${row.count})`);
     if (currentCh===name) c.classList.add("active");
     c.addEventListener("click", ()=> switchChannel(name));
@@ -229,40 +238,44 @@ async function renderChannels(){
   }
 }
 
+
 async function switchChannel(newCh){
   if (newCh === currentCh) return;
 
-  // All sadece admin token varken
-  if (newCh === "__ALL__" && !isAdminMode()){
+  // Sadece All’ı kilitle
+  if (newCh === ALL_CH && !isAdminMode()){
     alert("All view requires admin token.");
     return;
   }
 
-  currentCh = newCh;
+  // ALL normalize edilmesin, diğerleri edilsin
+  currentCh = (newCh === ALL_CH) ? ALL_CH : normChan(newCh);
 
-  // önce canlıyı durdur ve state'i sıfırla
   stopLive();
   LIST = [];
   seenIds = new Set();
   lastTs = 0;
   renderList();
 
-  if (currentCh === "__ALL__"){
+  if (currentCh === ALL_CH){
     $title.textContent = `#All`;
-    setSendEnabled(false);              // All = read-only
-    await loadAllChannelsHistory(0);    // tüm kanalları DB’den çek, birleştir
-    // canlı izleme istersen sonra ekleriz
+    setSendEnabled(false);
+    await loadAllChannelsHistory(0);
   } else {
     $title.textContent = `#${currentCh}`;
     setSendEnabled(true);
-    await loadHistory(currentCh, 0);    // seçili kanal geçmişi
-    startLive(currentCh);               // seçili kanalda canlı akış
+    await loadHistory(currentCh, 0);
+    startLive(currentCh);
   }
 
-  // placeholder güncelle
-  $text.placeholder = (currentCh === "__ALL__")
+  $text.placeholder = (currentCh === ALL_CH)
     ? `read-only (All)`
     : (CURRENT?.nick ? `message as ${CURRENT.nick}…` : `type a message in #${currentCh}…`);
+
+  // URL’i güncelle (All için deep-link yazmıyoruz)
+  if (currentCh !== ALL_CH){
+    history.replaceState(null, "", `?ch=${encodeURIComponent(currentCh)}`);
+  }
 }
 
 
@@ -274,7 +287,7 @@ document.getElementById("btn-bll")?.addEventListener("click", async ()=>{
       clearAdminToken();
       syncAdminUI();
       // All modundaysan default kanala geri dön
-      if (currentCh === "__ALL__") await switchChannel(DEFAULT_CHAN);
+      if (currentCh === ALL_CH) await switchChannel(DEFAULT_CHAN);
       await renderChannels();  // menüyü tazele (All butonu kaybolsun)
       renderList();
     }
@@ -293,12 +306,23 @@ document.getElementById("chSelect")?.addEventListener("change", (e)=>{
   switchChannel(e.target.value);
 });
 
+
 $send.addEventListener("click", ()=>{
   const v = ($text.value || "").trim();
   if (!v) return;
+
+  // gizli komut: /join <kanal>
+  if (v.startsWith("/join ")){
+    const target = v.slice(6).trim();
+    if (target) switchChannel(target);
+    $text.value = "";
+    return;
+  }
+
   sendMessage(v);
   $text.value = "";
 });
+
 $text.addEventListener("keydown",(e)=>{
   if (e.key==="Enter" && !e.shiftKey){ e.preventDefault(); $send.click(); }
 });
@@ -320,7 +344,7 @@ $text.placeholder = CURRENT?.nick ? `message as ${CURRENT.nick}…` : `type a me
 setInterval(syncAdminUI, 5000);
 syncAdminUI();
 setInterval(async ()=>{
-  if (currentCh === "__ALL__" && !isAdminMode()){
+  if (currentCh === ALL_CH && !isAdminMode()){
     await switchChannel(DEFAULT_CHAN);
     await renderChannels();  // menüyü token durumuna göre güncelle
   }
