@@ -1,46 +1,55 @@
 export const config = { runtime: "nodejs" };
 import { Redis } from "@upstash/redis";
 import applyCors from './_cors.js';
+import { Client } from "pg";
 const redis = Redis.fromEnv();
-
+const hasDB = !!process.env.DATABASE_URL;
+function pg(){ return new Client({ connectionString: process.env.DATABASE_URL }); }
+function ok(res, payload={}){ res.status(200).json({ ok:true, ...payload }); }
+function bad(res, code, error){ res.status(code).json({ ok:false, error }); }
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", process.env.CORS_ALLOW_ORIGIN || "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
 }
 
-export default async function handler(req, res) {
-  cors(res);
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "GET") return res.status(405).json({ error: "method_not_allowed" });
+export default async function handler(req,res){
+  if (applyCORS(req,res)) return;
 
-  const url = new URL(req.url, `http://${req.headers.host}`);
-    const nickParam = url.searchParams.get("me") ?? url.searchParams.get("nick") ?? "";
-    const nick = String(nickParam).trim().toLowerCase();
-
-  const out = new Set(["#wtf"]);
-  try {
-    let cursor = 0;
-    do {
-      const resScan = await redis.scan(cursor, {
-        match: "ch4t:chan:dm:*:messages",
-        count: 200
-      });
-      cursor = Number(resScan[0] || 0);
-      const keys = resScan[1] || [];
-      for (const k of keys) {
-        const chan = k.slice("ch4t:chan:".length, -":messages".length); // "dm:a|b"
-        if (!nick) { out.add(chan); continue; }
-        const pair = chan.startsWith("dm:") ? chan.slice(3) : chan;
-        const [a, b] = pair.split("|");
-        if ((a && a.toLowerCase() === nick) || (b && b.toLowerCase() === nick)) {
-          out.add("dm:" + [a, b].join("|").toLowerCase());
-        }
-      }
-    } while (cursor !== 0);
-  } catch (e) {
-    console.error(e);
+  if (req.method !== "GET") {
+    res.setHeader("Allow","GET,OPTIONS");
+    return bad(res,405,"method_not_allowed");
   }
 
-    return res.status(200).json({ channels: Array.from(out) });
+  if (!hasDB) {
+    // DB yoksa bellekte kanal listesini üretmek zor; şimdilik desteklemiyoruz.
+    return ok(res, { channels: [] });
+  }
+
+  const client = pg();
+  try{
+    await client.connect();
+    const { rows } = await client.query(`
+      SELECT channel,
+             COUNT(*)                 AS count,
+             MIN(ts)                  AS first_ts,
+             MAX(ts)                  AS last_ts
+        FROM messages
+       GROUP BY channel
+       ORDER BY MIN(ts) ASC
+    `);
+    // sayıları number'a çevir
+    const channels = rows.map(r => ({
+      channel: r.channel,
+      count: Number(r.count),
+      first_ts: Number(r.first_ts),
+      last_ts: Number(r.last_ts),
+    }));
+    return ok(res, { channels });
+  }catch(e){
+    console.error("GET /channels DB error:", e);
+    return bad(res,500,"db_read_failed");
+  }finally{
+    try{ await client.end(); }catch{}
+  }
 }
