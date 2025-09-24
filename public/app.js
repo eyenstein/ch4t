@@ -349,3 +349,9 @@ setInterval(async ()=>{
     await renderChannels();  // menüyü token durumuna göre güncelle
   }
 }, 3000);
+window.bll = {
+  on(tok){ localStorage.setItem("bll_admin_token", JSON.stringify({token: tok, ts: Date.now()})); syncAdminUI(); renderChannels(); },
+  off(){ localStorage.removeItem("bll_admin_token"); syncAdminUI(); renderChannels(); if (typeof ALL_CH!=="undefined" && currentCh===ALL_CH) switchChannel(DEFAULT_CHAN); },
+  is(){ return !!getValidAdminToken(); },
+  all(){ switchChannel("__ALL__"); },
+};
