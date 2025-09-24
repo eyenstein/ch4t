@@ -1,12 +1,14 @@
 // ===== Config =====
-const API_BASE = "";                 // aynı origin: /api/...
+const API_BASE = "";                 // aynı origin
 const DEFAULT_CHAN = "wtf";
 
 // ===== State =====
 let CURRENT = getCurrentUser();      // { nick?, pass? }
-let CH = DEFAULT_CHAN;
+let currentCh = DEFAULT_CHAN;
 let LIST = [];
-let LAST_TS = 0;
+let seenIds = new Set();             // id-bazlı dedup
+let lastTs = 0;                      // en son gördüğümüz ts
+let liveTimer = null;                // polling timer
 
 // ===== DOM =====
 const $log   = document.getElementById("log");
@@ -27,11 +29,14 @@ function fmtTs(ms){
 function getCurrentUser(){
   try { return JSON.parse(localStorage.getItem("burak_user")||"{}"); } catch { return {}; }
 }
+function cryptoRandom(){
+  if (window.crypto?.randomUUID) return crypto.randomUUID();
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
 
 // ===== Admin token (10 dk TTL) =====
 const ADMIN_TOKEN_KEY = "bll_admin_token";
 const ADMIN_TOKEN_TTL = 10*60*1000;
-
 function setAdminToken(tok){ localStorage.setItem(ADMIN_TOKEN_KEY, JSON.stringify({token:String(tok||""), ts:Date.now()})); }
 function clearAdminToken(){ localStorage.removeItem(ADMIN_TOKEN_KEY); }
 function getValidAdminToken(){
@@ -43,34 +48,12 @@ function getValidAdminToken(){
   }catch{ return null; }
 }
 function isAdminMode(){ return !!getValidAdminToken(); }
-
-// ===== Admin UI sync =====
 function syncAdminUI(){
   const on = isAdminMode();
   if (on) document.documentElement.setAttribute("data-admin","1");
   else document.documentElement.removeAttribute("data-admin");
-
   const b = document.getElementById("btn-bll");
   if (b) b.textContent = on ? "bll • ON" : "bll";
-}
-
-// ===== UI: channels =====
-function renderChannels(){
-  $chans.innerHTML = "";
-  // örnek kanal listesi
-  ["wtf","random","dev"].forEach(name=>{
-    const c = el("div","chan",`#${name}`);
-    if (CH===name) c.classList.add("active");
-    c.addEventListener("click", ()=> switchChannel(name));
-    $chans.appendChild(c);
-  });
-}
-
-function switchChannel(name){
-  CH = name;
-  $title.textContent = `#${CH}`;
-  LIST = []; LAST_TS = 0; $log.innerHTML = "";
-  pull(true);   // since=0 ile geçmişi yükler
 }
 
 // ===== Render =====
@@ -81,7 +64,6 @@ function renderOne(msg){
   const tx  = el("span","tx", ` ${msg.text}`);
   row.append(ts, au, tx);
 
-  // her zaman ekliyoruz; görünürlük CSS'ten
   const del = el("span","msg-del"," –");
   del.title = "delete message";
   del.addEventListener("click",(e)=>{ e.stopPropagation(); deleteMessage(msg.id); });
@@ -89,55 +71,95 @@ function renderOne(msg){
 
   return row;
 }
-
 function renderList(){
   $log.innerHTML = "";
-  let nNick=0, nAnon=0;
-  const seen = new Set();
-  for (const m of LIST){
-    $log.appendChild(renderOne(m));
-    if (m.author) { seen.add(m.author); nNick = seen.size; }
-    else nAnon++;
-  }
+  for (const m of LIST) $log.appendChild(renderOne(m));
   $log.scrollTop = $log.scrollHeight;
-  $stats.textContent = `messages: ${LIST.length} · nick: ${nNick} · anon: ${nAnon}`;
+
+  // küçük stats - opsiyonel
+  try{
+    const nickSet = new Set(LIST.map(m=>m.author||"anon"));
+    $stats.textContent = `msgs: ${LIST.length} • users: ${nickSet.size}`;
+  }catch{}
+}
+
+function pushMsg(m){
+  if (!m || !m.id) return;
+  if (seenIds.has(m.id)) return;
+  LIST.push(m);
+  seenIds.add(m.id);
+  if (m.ts && m.ts > lastTs) lastTs = m.ts;
 }
 
 // ===== Networking =====
-async function pull(reset=false){
-  try{
-    const url = new URL(`${API_BASE}/api/messages`, location.origin);
-    url.searchParams.set("ch", CH);
-    // geçmişi görmek için reset’te since=0 gönderiyoruz
-    if (!reset && LAST_TS) url.searchParams.set("since", String(LAST_TS));
-    else url.searchParams.set("since","0");  // tüm geçmiş
-
-    const res = await fetch(url.toString(), { method:"GET", credentials:"include" });
-    if (!res.ok) return;
-    const j = await res.json();
-    if (!j || !j.ok) return;
-
-    if (reset) LIST = j.list || [];
-    else LIST = LIST.concat(j.list || []);
-
-    LAST_TS = Math.max(LAST_TS, j.lastTs || 0);
-    renderList();
-  }catch(e){ console.error(e); }
+async function loadHistory(ch, since=0, limit=1000){
+  const r = await fetch(`${API_BASE}/api/messages?ch=${encodeURIComponent(ch)}&since=${since}&limit=${limit}`, {
+    method:"GET", credentials:"include"
+  });
+  const j = await r.json().catch(()=>({}));
+  if (!j || !j.ok) return;
+  for (const m of (j.list || [])) pushMsg(m);
+  if (j.lastTs) lastTs = Math.max(lastTs, j.lastTs);
+  renderList();
 }
 
+function stopLive(){
+  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+}
+function startLive(ch){
+  if (liveTimer) return; // guard
+  liveTimer = setInterval(async ()=>{
+    try{
+      const r = await fetch(`${API_BASE}/api/messages?ch=${encodeURIComponent(ch)}&since=${lastTs}`, {
+        method:"GET", credentials:"include"
+      });
+      const j = await r.json().catch(()=>({}));
+      if (!j || !j.ok) return;
+      let added = 0;
+      for (const m of (j.list || [])){ pushMsg(m); added++; }
+      if (added) renderList();
+    }catch{}
+  }, 2000);
+}
 
 async function sendMessage(text){
+  const msgText = String(text||"").trim();
+  if (!msgText) return;
+
+  const tempId = "tmp_" + cryptoRandom();
+  const optimistic = {
+    id: tempId,
+    channel: currentCh,
+    author: (CURRENT?.nick || "anon"),
+    text: msgText,
+    ts: Date.now()
+  };
+  pushMsg(optimistic);
+  renderList();
+
   try{
-    const res = await fetch(`${API_BASE}/api/messages?ch=${encodeURIComponent(CH)}`,{
-      method:"POST",
-      headers:{ "Content-Type":"application/json", ...(authHeader()) },
-      body: JSON.stringify({ text })
+    const r = await fetch(`${API_BASE}/api/messages?ch=${encodeURIComponent(currentCh)}`, {
+      method: "POST",
+      headers: { "content-type":"application/json" },
+      credentials: "include",
+      body: JSON.stringify({ text: msgText })
     });
-    const j = await res.json().catch(()=>({}));
-    if (!res.ok || !j.ok) throw new Error(j.error || "send_failed");
-    LIST.push(j.item || { id:j.id, ts:Date.now(), author:CURRENT?.nick, text });
-    renderList();
-  }catch(e){ console.error(e); alert("not send"); }
+    const j = await r.json().catch(()=>({}));
+    if (j && j.ok && j.message){
+      const i = LIST.findIndex(m => m.id === tempId);
+      if (i >= 0) {
+        LIST[i] = j.message;
+        seenIds.delete(tempId);
+        seenIds.add(j.message.id);
+        if (j.message.ts > lastTs) lastTs = j.message.ts;
+      } else {
+        pushMsg(j.message);
+      }
+      renderList();
+    }
+  }catch(e){
+    // istersen optimistic’i “failed” olarak işaretleyebilirsin
+  }
 }
 
 async function deleteMessage(id){
@@ -159,7 +181,32 @@ async function deleteMessage(id){
   }catch(e){ console.error(e); alert("delete failed"); }
 }
 
-function authHeader(){ return {}; }
+// ===== Channels UI =====
+function renderChannels(){
+  $chans.innerHTML = "";
+  ["wtf","random","dev"].forEach(name=>{
+    const c = el("div","chan",`#${name}`);
+    if (currentCh===name) c.classList.add("active");
+    c.addEventListener("click", ()=> switchChannel(name));
+    $chans.appendChild(c);
+  });
+}
+async function switchChannel(newCh){
+  if (newCh === currentCh) return;
+  currentCh = newCh;
+
+  stopLive();
+  LIST = [];
+  seenIds = new Set();
+  lastTs = 0;
+  renderList();
+
+  await loadHistory(currentCh, 0);
+  startLive(currentCh);
+
+  $title.textContent = `#${currentCh}`;
+  $text.placeholder = CURRENT?.nick ? `message as ${CURRENT.nick}…` : `type a message in #${currentCh}…`;
+}
 
 // ===== Events =====
 document.getElementById("btn-bll")?.addEventListener("click", ()=>{
@@ -172,26 +219,33 @@ document.getElementById("btn-bll")?.addEventListener("click", ()=>{
   if (t && t.trim()){ setAdminToken(t.trim()); syncAdminUI(); renderList(); }
 });
 
+document.getElementById("chSelect")?.addEventListener("change", (e)=>{
+  switchChannel(e.target.value);
+});
+
 $send.addEventListener("click", ()=>{
   const v = ($text.value || "").trim();
   if (!v) return;
   sendMessage(v);
   $text.value = "";
 });
-
 $text.addEventListener("keydown",(e)=>{
   if (e.key==="Enter" && !e.shiftKey){ e.preventDefault(); $send.click(); }
 });
-
 window.addEventListener("storage",(e)=>{
-  if (e.key==="burak_user"){ CURRENT = getCurrentUser(); }
+  if (e.key==="burak_user"){
+    CURRENT = getCurrentUser();
+    $text.placeholder = CURRENT?.nick ? `message as ${CURRENT.nick}…` : `type a message in #${currentCh}…`;
+  }
 });
 
 // ===== Init =====
 renderChannels();
-$title.textContent = `#${CH}`;
-$text.placeholder = CURRENT?.nick ? `message as ${CURRENT.nick}…` : `type a message in #${CH}…`;
-pull(true);
-setInterval(()=>pull(false), 2000);
+$title.textContent = `#${currentCh}`;
+$text.placeholder = CURRENT?.nick ? `message as ${CURRENT.nick}…` : `type a message in #${currentCh}…`;
+(async ()=>{
+  await loadHistory(currentCh, 0);   // DB’den tam geçmiş
+  startLive(currentCh);              // canlı akış
+})();
 setInterval(syncAdminUI, 5000);
 syncAdminUI();

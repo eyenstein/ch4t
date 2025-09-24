@@ -1,26 +1,17 @@
+// apps/ch4t/api/messages.js
 import { Client } from "pg";
 import applyCORS from "./_cors.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 
-// ===== Config =====
-const DEFAULT_CHANNEL = "wtf";       // # koymaya gerek yok DB'de sade dursun
+const DEFAULT_CHANNEL = "wtf";
 const hasDB = !!process.env.DATABASE_URL;
 const allowDelete = process.env.ALLOW_DELETE === "true";
 
-// ===== In-memory fallback =====
-const mem = { byCh: new Map() };
-function ensureMem(ch){
-  if (!mem.byCh.has(ch)) mem.byCh.set(ch, { list: [], lastTs: 0 });
-  return mem.byCh.get(ch);
-}
-
-// ===== Helpers =====
 function now(){ return Date.now(); }
 function uid(){
-  return crypto?.randomUUID
-    ? crypto.randomUUID()
-    : (Math.random().toString(36).slice(2) + Date.now().toString(36));
+  return crypto?.randomUUID ? crypto.randomUUID()
+    : (Math.random().toString(36).slice(2)+Date.now().toString(36));
 }
 function pg(){ return new Client({ connectionString: process.env.DATABASE_URL }); }
 function bad(res, code, error){ res.status(code).json({ ok:false, error }); }
@@ -41,7 +32,13 @@ function getToken(req){
   return m ? m[1] : null;
 }
 
-// ===== Handler =====
+// In-memory fallback
+const mem = { byCh: new Map() };
+function ensureMem(ch){
+  if (!mem.byCh.has(ch)) mem.byCh.set(ch, { list: [], lastTs: 0 });
+  return mem.byCh.get(ch);
+}
+
 export default async function handler(req,res){
   if (applyCORS(req,res)) return;
 
@@ -49,13 +46,13 @@ export default async function handler(req,res){
   const channel = String(url.searchParams.get("ch") || DEFAULT_CHANNEL).trim();
   const since = Number(url.searchParams.get("since") || 0);
 
-  // ---- author (JWT) ----
+  // ---- author from JWT ----
   let authorFromToken = "anon";
   const token = getToken(req);
   if (token){
     try {
       const payload = jwt.verify(token, process.env.JWT_SECRET || "dev");
-      authorFromToken = payload.sub || "anon";
+      authorFromToken = payload.sub || "anon"; // sub = nick
     } catch {}
   }
 
@@ -69,11 +66,10 @@ export default async function handler(req,res){
         await client.connect();
         const { rows } = await client.query(
           `SELECT id, channel, author, text, ts
-           FROM messages
-           WHERE channel = $1
-             AND ($2::bigint = 0 OR ts > $2)
-           ORDER BY ts ASC
-           LIMIT $3`,
+             FROM messages
+            WHERE channel = $1 AND ($2::bigint = 0 OR ts > $2)
+            ORDER BY ts ASC
+            LIMIT $3`,
           [channel, since, limit]
         );
         const list = rows.map(r => ({ ...r, ts: Number(r.ts) }));
@@ -82,14 +78,11 @@ export default async function handler(req,res){
       } catch(e){
         console.error("GET /messages DB error:", e);
         return bad(res, 500, "db_read_failed");
-      } finally {
-        try { await client.end(); } catch {}
-      }
+      } finally { try { await client.end(); } catch{} }
     } else {
       const box = ensureMem(channel);
-      const list = since
-        ? box.list.filter(m => m.ts > since).slice(0, limit)
-        : box.list.slice(0, limit);
+      const list = since ? box.list.filter(m => m.ts > since).slice(0,limit)
+                         : box.list.slice(0,limit);
       const lastTs = list.length ? list[list.length - 1].ts : since;
       return ok(res, { list, lastTs });
     }
@@ -98,11 +91,7 @@ export default async function handler(req,res){
   // ---------- POST ----------
   if (req.method === "POST") {
     let body = "";
-    await new Promise((resolve) => {
-      req.on("data", (c) => (body += c));
-      req.on("end", resolve);
-    });
-
+    await new Promise((resolve)=>{ req.on("data",c=>body+=c); req.on("end",resolve); });
     let data = {};
     try { data = JSON.parse(body || "{}"); }
     catch { return bad(res, 400, "invalid_json"); }
@@ -127,9 +116,7 @@ export default async function handler(req,res){
       } catch(e){
         console.error("POST /messages DB error:", e);
         return bad(res, 500, "db_write_failed");
-      } finally {
-        try { await client.end(); } catch {}
-      }
+      } finally { try { await client.end(); } catch{} }
     } else {
       const box = ensureMem(ch);
       box.list.push(doc);
@@ -138,7 +125,7 @@ export default async function handler(req,res){
     }
   }
 
-  // ---------- DELETE (kanalı komple temizleme) ----------
+  // ---------- DELETE ----------
   if (req.method === "DELETE") {
     if (!allowDelete) return bad(res, 403, "delete_disabled");
     if (hasDB){
@@ -150,9 +137,7 @@ export default async function handler(req,res){
       } catch(e){
         console.error("DELETE /messages DB error:", e);
         return bad(res, 500, "db_delete_failed");
-      } finally {
-        try { await client.end(); } catch {}
-      }
+      } finally { try { await client.end(); } catch{} }
     } else {
       const box = ensureMem(channel);
       box.list = []; box.lastTs = 0;

@@ -1,57 +1,52 @@
-// api/messages/[id].js
+// apps/ch4t/api/messages/[id].js
+import { Client } from "pg";
 import applyCORS, { isAdmin } from "../_cors.js";
 
-// not: global mem varsa kullanılır, yoksa DB fallback
+const hasDB = !!process.env.DATABASE_URL;
+
+function pg() {
+  return new Client({ connectionString: process.env.DATABASE_URL });
+}
+function ok(res, payload = {}) {
+  res.status(200).json({ ok: true, ...payload });
+}
+function bad(res, code, error) {
+  res.status(code).json({ ok: false, error });
+}
+
 export default async function handler(req, res) {
-  if (applyCORS(req, res)) return; // OPTIONS isteği burada biter
+  if (applyCORS(req, res)) return;
 
-  const { id } = req.query;
-
+  // Yalnızca DELETE
   if (req.method !== "DELETE") {
-    res.setHeader("Allow", "DELETE,OPTIONS");
-    return res.status(405).json({ ok: false, error: "method_not_allowed" });
+    res.setHeader("Allow", "DELETE, OPTIONS");
+    return bad(res, 405, "method_not_allowed");
   }
 
-  // admin token kontrolü
-  if (!isAdmin(req)) {
-    return res.status(401).json({ ok: false, error: "invalid_or_missing_token" });
+  // Admin token kontrolü
+  if (!isAdmin(req)) return bad(res, 401, "invalid_or_missing_delete_token");
+
+  // Param: /api/messages/:id
+  // Vercel node runtime'da req.query.id mevcut
+  const id = (req.query?.id || "").trim();
+  if (!id) return bad(res, 400, "id_required");
+
+  if (!hasDB) {
+    // İstersen burada in-memory temizleme de yapabilirdik ama paylaşılan mem yok.
+    // DB yoksa şimdilik desteklemiyoruz:
+    return bad(res, 501, "delete_requires_database");
   }
 
+  const client = pg();
   try {
-    // ---- A) memstore (in-memory) ----
-    if (typeof mem !== "undefined" && mem?.byCh) {
-      for (const [chName, chObj] of mem.byCh.entries()) {
-        const i = chObj.list.findIndex(m => m.id === id);
-        if (i !== -1) {
-          chObj.list[i].is_deleted = true;
-          chObj.list[i].deleted_at = Date.now();
-          return res.status(200).json({
-            ok: true,
-            id,
-            deleted_by: "admin_token",
-            channel: chName,
-          });
-        }
-      }
-      return res.status(404).json({ ok: false, error: "not_found" });
-    }
-
-    // ---- B) Postgres / DB ----
-    /*
-    const { Client } = require("pg");
-    const client = new Client({ connectionString: process.env.DATABASE_URL });
     await client.connect();
-    const q = await client.query("SELECT id FROM messages WHERE id=$1", [id]);
-    if (q.rows.length === 0) {
-      await client.end();
-      return res.status(404).json({ ok:false, error:"not_found" });
-    }
-    await client.query("UPDATE messages SET is_deleted=true, deleted_at=NOW() WHERE id=$1", [id]);
-    await client.end();
-    return res.status(200).json({ ok:true, id, deleted_by:"admin_token" });
-    */
+    const q = await client.query(`DELETE FROM messages WHERE id = $1`, [id]);
+    if (q.rowCount === 0) return bad(res, 404, "not_found");
+    return ok(res, { deleted: true, id });
   } catch (e) {
-    console.error("admin-delete-error", e);
-    return res.status(500).json({ ok: false, error: "server_error" });
+    console.error("DELETE /messages/:id DB error:", e);
+    return bad(res, 500, "db_delete_failed");
+  } finally {
+    try { await client.end(); } catch {}
   }
 }

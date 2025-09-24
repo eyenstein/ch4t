@@ -6,5 +6,10 @@ CREATE TABLE IF NOT EXISTS messages (
   ts      BIGINT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_messages_channel_ts ON messages(channel, ts DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_ts        ON messages(ts DESC);
+-- Kanal + zaman sorguları için birleşik index
+DROP INDEX IF EXISTS idx_messages_channel_ts;
+CREATE INDEX IF NOT EXISTS idx_messages_channel_ts ON messages(channel, ts);
+
+-- (İsteğe bağlı) Genel zaman index’i
+DROP INDEX IF EXISTS idx_messages_ts;
+CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts);
