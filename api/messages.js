@@ -8,6 +8,10 @@ const DEFAULT_CHANNEL = "wtf";
 const hasDB = !!process.env.DATABASE_URL;
 const allowDelete = process.env.ALLOW_DELETE === "true";
 
+// ---- helpers ----
+function normChan(s){
+  return String(s || "").trim().replace(/^#+/, "").toLowerCase();
+}
 function now(){ return Date.now(); }
 function uid(){
   return crypto?.randomUUID ? crypto.randomUUID()
@@ -43,8 +47,11 @@ export default async function handler(req,res){
   if (applyCORS(req,res)) return;
 
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const channel = String(url.searchParams.get("ch") || DEFAULT_CHANNEL).trim();
   const since = Number(url.searchParams.get("since") || 0);
+
+  // ---- channel (query) ----
+  const chRaw = url.searchParams.get("ch") || DEFAULT_CHANNEL;
+  const chNorm = normChan(chRaw);
 
   // ---- author from JWT ----
   let authorFromToken = "anon";
@@ -52,14 +59,17 @@ export default async function handler(req,res){
   if (token){
     try {
       const payload = jwt.verify(token, process.env.JWT_SECRET || "dev");
-      authorFromToken = payload.sub || "anon"; // sub = nick
+      // sub: nick
+      authorFromToken = payload.sub || "anon";
     } catch {}
   }
+
+  // ---- variants for legacy rows (e.g. '#wtf') ----
+  const variants = Array.from(new Set([ chNorm, "#"+chNorm ]));
 
   // ---------- GET ----------
   if (req.method === "GET") {
     const limit = Math.max(1, Math.min(2000, Number(url.searchParams.get("limit") || 1000)));
-
     if (hasDB){
       const client = pg();
       try {
@@ -67,24 +77,33 @@ export default async function handler(req,res){
         const { rows } = await client.query(
           `SELECT id, channel, author, text, ts
              FROM messages
-            WHERE channel = $1 AND ($2::bigint = 0 OR ts > $2)
+            WHERE channel = ANY($1)
+              AND ($2::bigint = 0 OR ts > $2)
             ORDER BY ts ASC
             LIMIT $3`,
-          [channel, since, limit]
+          [variants, since, limit]
         );
         const list = rows.map(r => ({ ...r, ts: Number(r.ts) }));
-        const lastTs = list.length ? list[list.length - 1].ts : since;
-        return ok(res, { list, lastTs });
+        const lastTs2 = list.length ? list[list.length - 1].ts : since;
+        return ok(res, { list, lastTs: lastTs2 });
       } catch(e){
         console.error("GET /messages DB error:", e);
         return bad(res, 500, "db_read_failed");
-      } finally { try { await client.end(); } catch{} }
+      } finally {
+        try { await client.end(); } catch {}
+      }
     } else {
-      const box = ensureMem(channel);
-      const list = since ? box.list.filter(m => m.ts > since).slice(0,limit)
-                         : box.list.slice(0,limit);
-      const lastTs = list.length ? list[list.length - 1].ts : since;
-      return ok(res, { list, lastTs });
+      // mem fallback: bütün varyant kutularını birleştir
+      let acc = [];
+      for (const v of variants){
+        const box = ensureMem(v);
+        const part = since ? box.list.filter(m => m.ts > since) : box.list;
+        acc = acc.concat(part);
+      }
+      acc.sort((a,b)=>a.ts-b.ts);
+      const list = acc.slice(0, limit);
+      const lastTs2 = list.length ? list[list.length - 1].ts : since;
+      return ok(res, { list, lastTs: lastTs2 });
     }
   }
 
@@ -96,7 +115,8 @@ export default async function handler(req,res){
     try { data = JSON.parse(body || "{}"); }
     catch { return bad(res, 400, "invalid_json"); }
 
-    const ch = String((data.channel || channel || DEFAULT_CHANNEL)).trim();
+    // yazarken normalize et (legacy satırlar için GET zaten varyantlı)
+    const ch = normChan(data.channel || chRaw || DEFAULT_CHANNEL);
     let text = normalizeText(data.text).trim();
     if (!text) return bad(res, 400, "text_required");
     if (text.length > 2000) text = text.slice(0,2000);
@@ -125,23 +145,29 @@ export default async function handler(req,res){
     }
   }
 
-  // ---------- DELETE ----------
+  // ---------- DELETE (clear channel) ----------
   if (req.method === "DELETE") {
     if (!allowDelete) return bad(res, 403, "delete_disabled");
+
+    // hangi kanalı sileceğiz? query'deki ch parametresini kullan
+    const clearVariants = Array.from(new Set([ chNorm, "#"+chNorm ]));
+
     if (hasDB){
       const client = pg();
       try {
         await client.connect();
-        await client.query(`DELETE FROM messages WHERE channel = $1`, [channel]);
-        return ok(res, { cleared:true });
+        await client.query(`DELETE FROM messages WHERE channel = ANY($1)`, [clearVariants]);
+        return ok(res, { cleared:true, channels: clearVariants });
       } catch(e){
         console.error("DELETE /messages DB error:", e);
         return bad(res, 500, "db_delete_failed");
       } finally { try { await client.end(); } catch{} }
     } else {
-      const box = ensureMem(channel);
-      box.list = []; box.lastTs = 0;
-      return ok(res, { cleared:true });
+      for (const v of clearVariants){
+        const box = ensureMem(v);
+        box.list = []; box.lastTs = 0;
+      }
+      return ok(res, { cleared:true, channels: clearVariants });
     }
   }
 
